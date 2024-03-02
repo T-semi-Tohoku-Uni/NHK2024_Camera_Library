@@ -5,11 +5,12 @@ from ultralytics import YOLO
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
 PADDY_RICE_RADIUS = 200.0
+DETECTABLE_MAX_DIS = 10000.0
 OBTAINABLE_MAX_DIS = 1000.0
 OBTAINABE_AREA_MIN_X = 100
 OBTAINABE_AREA_MAX_X = 220
 OBTAINABE_AREA_MIN_Y = 80
-OBTAINABE_AREA_MAX_Y = 160
+OBTAINABE_AREA_MAX_Y = 140
 
 
 def calc_distance(r :float) -> float:
@@ -38,13 +39,13 @@ def calc_distance(r :float) -> float:
         fy = fy * camy / pxl
         dis = PADDY_RICE_RADIUS *  fy / r
     except ZeroDivisionError:
-        dis = OBTAINABLE_MAX_DIS
+        dis = DETECTABLE_MAX_DIS
     return dis
     
 class FrontCamera:
-    def __init__(self, device_id):
+    def __init__(self, model_path, device_id):
         # Load the YOLOv8 model
-        self.model = YOLO('models/20240109best.pt')
+        self.model = YOLO(model_path)
         
         # Camera Settings
         self.cap = cv2.VideoCapture(device_id)
@@ -57,7 +58,7 @@ class FrontCamera:
         # Paddy Rice Parameters
         self.paddy_rice_x = 0
         self.paddy_rice_y = 0
-        self.paddy_rice_z = OBTAINABLE_MAX_DIS
+        self.paddy_rice_z = DETECTABLE_MAX_DIS
         
     def DetectedObjectCounter(self) -> int:
         """
@@ -69,7 +70,7 @@ class FrontCamera:
         """
         try:
             self.ret, img = self.cap.read()
-            results = self.model.track(img, save=False, imgsz=320, conf=0.5, persist=True)
+            results = self.model.track(img, save=False, imgsz=320, conf=0.5, persist=True, verbose=False)
             self.annotated_frame = results[0].plot()
             self.names = results[0].names
             self.classes = results[0].boxes.cls
@@ -81,7 +82,7 @@ class FrontCamera:
         try:
             self.paddy_rice_x = 0
             self.paddy_rice_y = 0
-            self.paddy_rice_z = OBTAINABLE_MAX_DIS
+            self.paddy_rice_z = DETECTABLE_MAX_DIS
             for box, cls in zip(self.boxes, self.classes):
                 name = self.names[int(cls)]
                 if(name == "blueball"):

@@ -2,14 +2,13 @@ import cv2
 from src import FrontCamera
 
 if __name__ == "__main__":
-    cam = FrontCamera(0)
+    cam = FrontCamera('models/20240109best.pt', 0)
     while cam.cap.isOpened():
         items = cam.DetectedObjectCounter()
-        print(f"items:{items}")
         x,y,z = cam.ObjectPosition()
-        print(f"x:{x}, y:{y}, z:{z}")
         is_obtainable = cam.IsObtainable()
-        print(is_obtainable)
+        if is_obtainable:
+            print(f"\nitems:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
 
         if not cam.ret:
             continue
