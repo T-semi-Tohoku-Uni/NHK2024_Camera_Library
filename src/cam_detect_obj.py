@@ -63,7 +63,7 @@ class FrontCamera:
     def DetectedObjectCounter(self) -> int:
         try:
             self.ret, img = self.cap.read()
-            results = self.model.predict(img, save=False, imgsz=320, conf=0.5)
+            results = self.model.track(img, save=False, imgsz=320, conf=0.5, persist=True)
             self.annotated_frame = results[0].plot()
             self.names = results[0].names
             self.classes = results[0].boxes.cls
