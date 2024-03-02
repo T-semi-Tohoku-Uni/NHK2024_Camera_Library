@@ -44,7 +44,7 @@ def calc_distance(r :float) -> float:
 class FrontCamera:
     def __init__(self, device_id):
         # Load the YOLOv8 model
-        self.model = YOLO('../../yolov8model/20240109best.pt')
+        self.model = YOLO('models/20240109best.pt')
         
         # Camera Settings
         self.cap = cv2.VideoCapture(device_id)
@@ -59,8 +59,14 @@ class FrontCamera:
         self.paddy_rice_y = 0
         self.paddy_rice_z = OBTAINABLE_MAX_DIS
         
-    # 検出したオブジェクト数を返す
     def DetectedObjectCounter(self) -> int:
+        """
+        検出したオブジェクト数を返す
+
+        Returns:
+            len(self.boxes) : int
+                検知数
+        """
         try:
             self.ret, img = self.cap.read()
             results = self.model.track(img, save=False, imgsz=320, conf=0.5, persist=True)
@@ -69,10 +75,13 @@ class FrontCamera:
             self.classes = results[0].boxes.cls
             self.boxes = results[0].boxes
         finally:
-            return len(self.names)
+            return len(self.boxes)
     
     def ObjectPosition(self):
         try:
+            self.paddy_rice_x = 0
+            self.paddy_rice_y = 0
+            self.paddy_rice_z = OBTAINABLE_MAX_DIS
             for box, cls in zip(self.boxes, self.classes):
                 name = self.names[int(cls)]
                 if(name == "blueball"):
@@ -81,8 +90,8 @@ class FrontCamera:
                     r = min(abs(x1-x2), abs(y1-y2))
                     z = calc_distance(r)
                     if z < self.paddy_rice_z:
-                        self.paddy_rice_x = (x1+x2)/2
-                        self.paddy_rice_y = (y1+y2)/2
+                        self.paddy_rice_x = int((x1+x2)/2)
+                        self.paddy_rice_y = int((y1+y2)/2)
                         self.paddy_rice_z = z
         finally:
             return self.paddy_rice_x, self.paddy_rice_y, self.paddy_rice_z

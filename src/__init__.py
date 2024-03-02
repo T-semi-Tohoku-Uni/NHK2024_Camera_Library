@@ -1,1 +1,1 @@
-from cam_detect_obj import *
+from .cam_detect_obj import *
