@@ -2,7 +2,8 @@ import cv2
 from src import FrontCamera, coordinate_transformation
 
 if __name__ == "__main__":
-    cam = FrontCamera('models/20240109best.pt', 0)
+    model_path = 'models/20240109best.pt'
+    cam = FrontCamera(model_path, 0)
 
     while cam.cap.isOpened():
         items = cam.DetectedObjectCounter()

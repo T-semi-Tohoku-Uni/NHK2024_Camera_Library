@@ -8,15 +8,10 @@ FRAME_HEIGHT = 240
 PADDY_RICE_RADIUS = 200.0
 DETECTABLE_MAX_DIS = 10000.0
 OBTAINABLE_MAX_DIS = 2000.0
-"""
-ROBOT_POS_X = -0.09885
-ROBOT_POS_Y = -0.439857
-ROBOT_POS_Z = -0.169893
-"""
-ROBOT_POS_X = 0
-ROBOT_POS_Y = 0
-ROBOT_POS_Z = 0
-theta_x = 0
+ROBOT_POS_X = 100
+ROBOT_POS_Y = 400
+ROBOT_POS_Z = 150
+theta_x = 60*np.pi/180
 theta_y = 0
 theta_z = 0
 OBTAINABE_AREA_MIN_X = 100
@@ -67,15 +62,15 @@ def coordinate_transformation(w, h, dis):
     C_in_inv = np.array([[  0.0018382, 0, 0], [0, 0.0018051, 0], [0, 0, 1] ,[0, 0, 0]])
     C_pos = np.array([[ROBOT_POS_X],[ROBOT_POS_Y],[ROBOT_POS_Z],[0]])
     C_rot = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), 0],
-                      [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), 0],
+                      [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), 0],
                       [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), 0],
                       [0, 0, 0, 1]])
     # inverse matrix
     C_rot_inv = np.linalg.inv(C_rot)
     
-    Target = np.array([[w - FRAME_WIDTH/2], [h - FRAME_HEIGHT/2], [1]])
+    Target = np.array([[w - FRAME_WIDTH/2], [-h + FRAME_HEIGHT/2], [1]])
     
-    coordinate = (C_rot_inv @ ((C_in_inv @ Target) + C_pos)) * dis
+    coordinate = C_rot_inv @ ((C_in_inv @ Target)*dis + C_pos)
     
     return int(coordinate[0,0]), int(coordinate[1,0]), int(coordinate[2,0])
     
