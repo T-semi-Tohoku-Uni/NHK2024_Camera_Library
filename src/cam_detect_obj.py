@@ -1,17 +1,30 @@
 import numpy as np
 import cv2
 from ultralytics import YOLO
+import queue
 
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
 PADDY_RICE_RADIUS = 200.0
 DETECTABLE_MAX_DIS = 10000.0
-OBTAINABLE_MAX_DIS = 1000.0
+OBTAINABLE_MAX_DIS = 2000.0
+"""
+ROBOT_POS_X = -0.09885
+ROBOT_POS_Y = -0.439857
+ROBOT_POS_Z = -0.169893
+"""
+ROBOT_POS_X = 0
+ROBOT_POS_Y = 0
+ROBOT_POS_Z = 0
+theta_x = 0
+theta_y = 0
+theta_z = 0
 OBTAINABE_AREA_MIN_X = 100
 OBTAINABE_AREA_MAX_X = 220
 OBTAINABE_AREA_MIN_Y = 80
 OBTAINABE_AREA_MAX_Y = 140
 
+q_frames = queue.Queue()
 
 def calc_distance(r :float) -> float:
     """
@@ -41,6 +54,30 @@ def calc_distance(r :float) -> float:
     except ZeroDivisionError:
         dis = DETECTABLE_MAX_DIS
     return dis
+
+def coordinate_transformation(w, h, dis):
+    """
+    画像座標（ピクセル値）からロボット座標（mm）へ変換する:
+    
+    Returns
+    x:水平方向
+    y:垂直方向
+    z:奥行方向
+    """
+    C_in_inv = np.array([[  0.0018382, 0, 0], [0, 0.0018051, 0], [0, 0, 1] ,[0, 0, 0]])
+    C_pos = np.array([[ROBOT_POS_X],[ROBOT_POS_Y],[ROBOT_POS_Z],[0]])
+    C_rot = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), 0],
+                      [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), 0],
+                      [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), 0],
+                      [0, 0, 0, 1]])
+    # inverse matrix
+    C_rot_inv = np.linalg.inv(C_rot)
+    
+    Target = np.array([[w - FRAME_WIDTH/2], [h - FRAME_HEIGHT/2], [1]])
+    
+    coordinate = (C_rot_inv @ ((C_in_inv @ Target) + C_pos)) * dis
+    
+    return int(coordinate[0,0]), int(coordinate[1,0]), int(coordinate[2,0])
     
 class FrontCamera:
     def __init__(self, model_path, device_id):
@@ -68,6 +105,7 @@ class FrontCamera:
             len(self.boxes) : int
                 検知数
         """
+        
         try:
             self.ret, img = self.cap.read()
             results = self.model.track(img, save=False, imgsz=320, conf=0.5, persist=True, verbose=False)
@@ -91,9 +129,7 @@ class FrontCamera:
                     r = min(abs(x1-x2), abs(y1-y2))
                     z = calc_distance(r)
                     if z < self.paddy_rice_z:
-                        self.paddy_rice_x = int((x1+x2)/2)
-                        self.paddy_rice_y = int((y1+y2)/2)
-                        self.paddy_rice_z = z
+                        (self.paddy_rice_x, self.paddy_rice_y, self.paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
         finally:
             return self.paddy_rice_x, self.paddy_rice_y, self.paddy_rice_z
     
