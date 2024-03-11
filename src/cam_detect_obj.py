@@ -70,7 +70,7 @@ def coordinate_transformation(w, h, dis):
     
     Target = np.array([[w - FRAME_WIDTH/2], [-h + FRAME_HEIGHT/2], [1]])
     
-    coordinate = C_rot_inv @ ((C_in_inv @ Target)*dis + C_pos)
+    coordinate = C_rot_inv @ ((C_in_inv @ Target)*dis) + C_pos
     
     return int(coordinate[0,0]), int(coordinate[1,0]), int(coordinate[2,0])
     
