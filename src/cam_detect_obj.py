@@ -5,13 +5,15 @@ import queue
 
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
+INFERRED_WIDTH = 320
+INFERRED_HEIGHT = 256
 PADDY_RICE_RADIUS = 200.0
 DETECTABLE_MAX_DIS = 10000.0
 OBTAINABLE_MAX_DIS = 2000.0
 ROBOT_POS_X = 100
 ROBOT_POS_Y = 400
 ROBOT_POS_Z = 150
-theta_x = 60*np.pi/180
+theta_x = 30*np.pi/180
 theta_y = 0
 theta_z = 0
 OBTAINABE_AREA_MIN_X = 100
@@ -35,11 +37,11 @@ def calc_distance(r :float) -> float:
     dis : float
         カメラから球までの距離[mm](キャリブレーションを用いた値)
     """
-    pxl = FRAME_HEIGHT
+    pxl = INFERRED_HEIGHT
     # y方向の焦点距離(inrofの時のBufferlo web camera)
     # fy = 470
     # y方向の焦点距離(Logi C615n)
-    fy = 554
+    fy = 270
     # WebカメラのCMOSセンサー(1/4インチと仮定)の高さ[mm]
     camy = 2.7
     try:
@@ -59,7 +61,7 @@ def coordinate_transformation(w, h, dis):
     y:垂直方向
     z:奥行方向
     """
-    C_in_inv = np.array([[  0.0018382, 0, 0], [0, 0.0018051, 0], [0, 0, 1] ,[0, 0, 0]])
+    C_in_inv = np.array([[0.0037037, 0, 0], [0, 0.0037037, 0], [0, 0, 1] ,[0, 0, 0]])
     C_pos = np.array([[ROBOT_POS_X],[ROBOT_POS_Y],[ROBOT_POS_Z],[0]])
     C_rot = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), 0],
                       [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), 0],
@@ -68,9 +70,10 @@ def coordinate_transformation(w, h, dis):
     # inverse matrix
     C_rot_inv = np.linalg.inv(C_rot)
     
-    Target = np.array([[w - FRAME_WIDTH/2], [-h + FRAME_HEIGHT/2], [1]])
+    # Opencvの座標でいう(INFERRED_WIDTH/2, INFERRED_HEIGHT/2)が(0,0)になるよう平行移動
+    Target = np.array([[(w-INFERRED_WIDTH/2)*dis], [(-h+INFERRED_HEIGHT/2)*dis], [dis]])
     
-    coordinate = C_rot_inv @ ((C_in_inv @ Target)*dis) + C_pos
+    coordinate = C_rot_inv @ ((C_in_inv @ Target) + C_pos) 
     
     return int(coordinate[0,0]), int(coordinate[1,0]), int(coordinate[2,0])
     
@@ -112,6 +115,17 @@ class FrontCamera:
             return len(self.boxes)
     
     def ObjectPosition(self):
+        """
+        籾の位置を返す
+
+        Returns:
+            int(self.paddy_rice_x): int
+                ロボット座標の水平方向（カメラ側を前とした時の右が正）[mm]
+            int(self.paddy_rice_y): int
+                ロボット座標の垂直方向（カメラ側を前とした時の上が正）[mm]
+            int(self.paddy_rice_z): int
+                ロボット座標の奥行方向（カメラ側を前とした時の前が正）[mm]
+        """
         try:
             self.paddy_rice_x = 0
             self.paddy_rice_y = 0
@@ -126,7 +140,7 @@ class FrontCamera:
                     if z < self.paddy_rice_z:
                         (self.paddy_rice_x, self.paddy_rice_y, self.paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
         finally:
-            return self.paddy_rice_x, self.paddy_rice_y, self.paddy_rice_z
+            return int(self.paddy_rice_x), int(self.paddy_rice_y), int(self.paddy_rice_z)
     
     def IsObtainable(self):
         return (self.paddy_rice_x > OBTAINABE_AREA_MIN_X and self.paddy_rice_x < OBTAINABE_AREA_MAX_X
