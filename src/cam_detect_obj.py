@@ -1,7 +1,8 @@
 import numpy as np
 import cv2
 from ultralytics import YOLO
-import queue
+import multiprocessing
+import multiprocessing.sharedctypes
 
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
@@ -20,8 +21,6 @@ OBTAINABE_AREA_MIN_X = 100
 OBTAINABE_AREA_MAX_X = 220
 OBTAINABE_AREA_MIN_Y = 80
 OBTAINABE_AREA_MAX_Y = 140
-
-q_frames = queue.Queue()
 
 def calc_distance(r :float) -> float:
     """
@@ -76,6 +75,18 @@ def coordinate_transformation(w, h, dis):
     coordinate = C_rot_inv @ ((C_in_inv @ Target) + C_pos) 
     
     return int(coordinate[0,0]), int(coordinate[1,0]), int(coordinate[2,0])
+
+def camera_reader(_cap, out_buf, buf1_ready):
+    while(True):
+        try:
+            ret, frame = _cap.read()
+            if not ret:
+                continue
+            buf1_ready.clear()
+            memoryview(out_buf).cast('B')[:] = memoryview(frame).cast('B')[:]
+            buf1_ready.set()
+        except KeyboardInterrupt:
+            break
     
 class FrontCamera:
     def __init__(self, model_path, device_id):
@@ -88,12 +99,18 @@ class FrontCamera:
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.ret = False
         
         # Paddy Rice Parameters
         self.paddy_rice_x = 0
         self.paddy_rice_y = 0
         self.paddy_rice_z = DETECTABLE_MAX_DIS
+        
+        # Multiprocessing
+        self.buf1 = multiprocessing.sharedctypes.RawArray('B',FRAME_WIDTH*FRAME_HEIGHT*3)
+        self.buf1_ready = multiprocessing.Event()
+        self.buf1_ready.clear()
+        self.p1=multiprocessing.Process(target=camera_reader, args=(self.cap, self.buf1,self.buf1_ready), daemon=True)
+        self.p1.start()
         
     def DetectedObjectCounter(self) -> int:
         """
@@ -105,7 +122,9 @@ class FrontCamera:
         """
         
         try:
-            self.ret, img = self.cap.read()
+            self.buf1_ready.wait()
+            img = np.reshape(self.buf1, (FRAME_HEIGHT, FRAME_WIDTH, 3))
+            self.buf1_ready.clear()
             results = self.model.track(img, save=False, imgsz=320, conf=0.5, persist=True, verbose=False)
             self.annotated_frame = results[0].plot()
             self.names = results[0].names
