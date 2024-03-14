@@ -6,13 +6,11 @@ if __name__ == "__main__":
     cam = FrontCamera(model_path, 0)
 
     while cam.cap.isOpened():
-        items = cam.DetectedObjectCounter()
-        x,y,z = cam.ObjectPosition()
-        is_obtainable = cam.IsObtainable()
+        items, x,y,z, is_obtainable, annotated_frame = cam.queue.get()
         print(f"\nitems:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
 
-        cv2.drawMarker(cam.annotated_frame, (160,128), (0,0,255))
-        cv2.imshow('image', cam.annotated_frame)
+        cv2.drawMarker(annotated_frame, (160,128), (0,0,255))
+        cv2.imshow('image', annotated_frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
         

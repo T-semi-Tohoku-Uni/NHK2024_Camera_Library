@@ -115,7 +115,7 @@ def capture_and_detect_ball_coordinates(queue, process_id, cap, model):
             if not ret:
                 continue
             results = model.track(frame, save=False, imgsz=320, conf=0.5, persist=True, verbose=False)
-            #annotated_frame = results[0].plot()
+            annotated_frame = results[0].plot()
             names = results[0].names
             classes = results[0].boxes.cls
             boxes = results[0].boxes
@@ -136,7 +136,7 @@ def capture_and_detect_ball_coordinates(queue, process_id, cap, model):
             is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_z-OBTAINABE_AREA_CENTER_Z)**2 < OBTAINABE_AREA_RADIUS**2
         
             # 検出したボールの座標をキューに送信 (座標はx,z,yの順であるがxは水平，zは奥行方向)
-            queue.put(len(boxes), paddy_rice_x, paddy_rice_z, paddy_rice_y, is_obtainable)    
+            queue.put((len(boxes), paddy_rice_x, paddy_rice_z, paddy_rice_y, is_obtainable, annotated_frame))    
         
         except KeyboardInterrupt:
             break
@@ -154,17 +154,12 @@ class FrontCamera:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
-        # Paddy Rice Parameters
-        self.paddy_rice_x = 0
-        self.paddy_rice_y = 0
-        self.paddy_rice_z = DETECTABLE_MAX_DIS
-        
         # Multiprocessing
         # プロセス間通信用のキューを作成
         self.queue = multiprocessing.Queue()
 
         # カメラからの画像キャプチャとボールの座標検出を行うプロセスを10個生成
-        self.processes = [multiprocessing.Process(target=capture_and_detect_ball_coordinates, args=(self.queue, i, self.cap)) for i in range(10)]
+        self.processes = [multiprocessing.Process(target=capture_and_detect_ball_coordinates, args=(self.queue, i, self.cap, self.model)) for i in range(10)]
 
         # すべてのプロセスを開始
         for process in self.processes:
