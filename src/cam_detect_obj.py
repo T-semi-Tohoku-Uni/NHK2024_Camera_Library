@@ -20,6 +20,25 @@ OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Z = 550
 OBTAINABE_AREA_RADIUS = 100
 
+"""
+def camera_reader(_cap, out_buf, buf1_ready):
+    
+    カメラから画像を読みだしてバッファにためる
+    
+    Parameters
+    -----------
+    _cap : 
+        カメラのキャプチャ
+    out_buf : 
+        読みだした画像
+    buf1_ready : 
+        out_bufのイベントオブジェクト
+    
+    Returns
+    -----------
+    """
+        
+
 def calc_distance(r :float) -> float:
     """
     球の半径から距離を計算する
@@ -85,32 +104,43 @@ def coordinate_transformation(w, h, dis):
     
     return int(coordinate[0,0]), int(coordinate[2,0]), int(coordinate[1,0])
 
-def camera_reader(_cap, out_buf, buf1_ready):
+def capture_and_detect_ball_coordinates(queue, process_id, cap, model):
     """
-    カメラから画像を読みだしてバッファにためる
-    
-    Parameters
-    -----------
-    _cap : 
-        カメラのキャプチャ
-    out_buf : 
-        読みだした画像
-    buf1_ready : 
-        out_bufのイベントオブジェクト
-    
-    Returns
-    -----------
+    カメラから画像をキャプチャし、ボールの座標を検出してキューに送信するプロセスの関数。
+    process_idはプロセスの識別子で、デバッグやログ出力に利用する。
     """
-    while _cap.isOpened():
+    while True:
         try:
-            ret, frame = _cap.read()
+            ret, frame = cap.read()
             if not ret:
                 continue
-            buf1_ready.clear()
-            memoryview(out_buf).cast('B')[:] = memoryview(frame).cast('B')[:]
-            buf1_ready.set()
+            results = model.track(frame, save=False, imgsz=320, conf=0.5, persist=True, verbose=False)
+            #annotated_frame = results[0].plot()
+            names = results[0].names
+            classes = results[0].boxes.cls
+            boxes = results[0].boxes
+            
+            paddy_rice_x = 0
+            paddy_rice_y = 0
+            paddy_rice_z = DETECTABLE_MAX_DIS
+            for box, cls in zip(boxes, classes):
+                name = names[int(cls)]
+                if(name == "blueball"):
+                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                    # 長方形の長辺を籾の半径とする
+                    r = max(abs(x1-x2), abs(y1-y2))
+                    z = calc_distance(r)
+                    # 籾が複数ある場合は最も近いものの座標を返す
+                    if z < paddy_rice_z:
+                        (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
+            is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_z-OBTAINABE_AREA_CENTER_Z)**2 < OBTAINABE_AREA_RADIUS**2
+        
+            # 検出したボールの座標をキューに送信 (座標はx,z,yの順であるがxは水平，zは奥行方向)
+            queue.put(len(boxes), paddy_rice_x, paddy_rice_z, paddy_rice_y, is_obtainable)    
+        
         except KeyboardInterrupt:
             break
+         
     
 class FrontCamera:
     def __init__(self, model_path, device_id):
@@ -130,21 +160,42 @@ class FrontCamera:
         self.paddy_rice_z = DETECTABLE_MAX_DIS
         
         # Multiprocessing
+        # プロセス間通信用のキューを作成
+        self.queue = multiprocessing.Queue()
+
+        # カメラからの画像キャプチャとボールの座標検出を行うプロセスを10個生成
+        self.processes = [multiprocessing.Process(target=capture_and_detect_ball_coordinates, args=(self.queue, i, self.cap)) for i in range(10)]
+
+        # すべてのプロセスを開始
+        for process in self.processes:
+            process.start()
+            
+    def __del__(self):
+        # すべてのプロセスの終了処理
+        for process in self.processes:
+            process.terminate()
+            process.join()
+        self.cap.release()
+        print("Closed Capturing Device")
+
+        """
         self.buf1 = multiprocessing.sharedctypes.RawArray('B',FRAME_WIDTH*FRAME_HEIGHT*3)
         self.buf1_ready = multiprocessing.Event()
         self.buf1_ready.clear()
         self.p1=multiprocessing.Process(target=camera_reader, args=(self.cap, self.buf1,self.buf1_ready), daemon=True)
         self.p1.start()
         self.kill_flg = False
-        
-    def DetectedObjectCounter(self) -> int:
         """
+        
+    """  
+    def DetectedObjectCounter(self) -> int:
+        
         検出したオブジェクト数を返す
 
         Returns:
             len(self.boxes) : int
                 検知数
-        """
+        
         
         try:
             self.buf1_ready.wait()
@@ -157,9 +208,10 @@ class FrontCamera:
             self.boxes = results[0].boxes
         finally:
             return len(self.boxes)
-    
+    """
+    """
     def ObjectPosition(self):
-        """
+        
         籾の位置を返す
 
         Returns:
@@ -169,7 +221,7 @@ class FrontCamera:
                 ロボット座標の垂直方向（カメラ側を前とした時の上が正）[mm]
             int(self.paddy_rice_z): int
                 ロボット座標の奥行方向（カメラ側を前とした時の前が正）[mm]
-        """
+        
         try:
             self.paddy_rice_x = 0
             self.paddy_rice_y = 0
@@ -186,19 +238,16 @@ class FrontCamera:
                         (self.paddy_rice_x, self.paddy_rice_y, self.paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
         finally:
             return int(self.paddy_rice_x), int(self.paddy_rice_y), int(self.paddy_rice_z)
+    """
     
+    """
     def IsObtainable(self):
-        """
+        
         籾をピックアップできる領域内に籾が存在するかどうか
 
         Returns
         ----------
         領域内ならばTrue
         そうでないならばFalse
-        """
-        return ((self.paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (self.paddy_rice_z-OBTAINABE_AREA_CENTER_Z)**2 < OBTAINABE_AREA_RADIUS**2)
         
-    def __del__(self):
-        self.p1.join()
-        self.cap.release()
-        print("Closed Capturing Device")
+    """
