@@ -64,12 +64,13 @@ def coordinate_transformation(w, h, dis):
     
     Returns
     -----------
-    x : int
+    int(coordinate[0,0]) : int
         水平方向 [mm]
-    y : int
-        垂直方向 [mm]
-    z : int
+    int(coordinate[2,0]) : int
         奥行方向 [mm]
+    int(coordinate[1,0]) : int
+        垂直方向 [mm]
+    
     """
     internal_param_inv = np.array([[0.0037037, 0, 0], [0, 0.0037037, 0], [0, 0, 1] ,[0, 0, 1/dis]])
     external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), ROBOT_POS_X],
@@ -82,7 +83,7 @@ def coordinate_transformation(w, h, dis):
     
     coordinate = external_param @ (internal_param_inv @ Target) 
     
-    return int(coordinate[0,0]), int(coordinate[1,0]), int(coordinate[2,0])
+    return int(coordinate[0,0]), int(coordinate[2,0]), int(coordinate[1,0])
 
 def camera_reader(_cap, out_buf, buf1_ready):
     """
