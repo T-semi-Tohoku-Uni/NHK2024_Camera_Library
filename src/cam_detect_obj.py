@@ -55,28 +55,53 @@ def coordinate_transformation(w, h, dis):
     """
     画像座標（ピクセル値）からロボット座標（mm）へ変換する:
     
+    Parameters
+    -----------
+    w : int
+        幅 [pxl]
+    h : int
+        高さ [pxl]
+    dis : int
+        奥行方向 [mm]
+    
     Returns
-    x:水平方向
-    y:垂直方向
-    z:奥行方向
+    -----------
+    x : int
+        水平方向 [mm]
+    y : int
+        垂直方向 [mm]
+    z : int
+        奥行方向 [mm]
     """
-    C_in_inv = np.array([[0.0037037, 0, 0], [0, 0.0037037, 0], [0, 0, 1] ,[0, 0, 0]])
-    C_pos = np.array([[ROBOT_POS_X],[ROBOT_POS_Y],[ROBOT_POS_Z],[0]])
-    C_rot = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), 0],
-                      [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), 0],
-                      [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), 0],
+    internal_param_inv = np.array([[0.0037037, 0, 0], [0, 0.0037037, 0], [0, 0, 1] ,[0, 0, 1/dis]])
+    external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), ROBOT_POS_X],
+                      [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), ROBOT_POS_Y],
+                      [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), ROBOT_POS_Z],
                       [0, 0, 0, 1]])
-    # inverse matrix
-    C_rot_inv = np.linalg.inv(C_rot)
     
     # Opencvの座標でいう(INFERRED_WIDTH/2, INFERRED_HEIGHT/2)が(0,0)になるよう平行移動
     Target = np.array([[(w-INFERRED_WIDTH/2)*dis], [(-h+INFERRED_HEIGHT/2)*dis], [dis]])
     
-    coordinate = C_rot_inv @ ((C_in_inv @ Target) + C_pos) 
+    coordinate = external_param @ (internal_param_inv @ Target) 
     
     return int(coordinate[0,0]), int(coordinate[1,0]), int(coordinate[2,0])
 
 def camera_reader(_cap, out_buf, buf1_ready):
+    """
+    カメラから画像を読みだしてバッファにためる
+    
+    Parameters
+    -----------
+    _cap : 
+        カメラのキャプチャ
+    out_buf : 
+        読みだした画像
+    buf1_ready : 
+        out_bufのイベントオブジェクト
+    
+    Returns
+    -----------
+    """
     while(True):
         try:
             ret, frame = _cap.read()
@@ -156,16 +181,25 @@ class FrontCamera:
                     # 長方形の短辺を籾の半径とする
                     r = min(abs(x1-x2), abs(y1-y2))
                     z = calc_distance(r)
+                    # 籾が複数ある場合は最も近いものの座標を返す
                     if z < self.paddy_rice_z:
                         (self.paddy_rice_x, self.paddy_rice_y, self.paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
         finally:
             return int(self.paddy_rice_x), int(self.paddy_rice_y), int(self.paddy_rice_z)
     
     def IsObtainable(self):
+        """
+        籾をピックアップできる領域内に籾が存在するかどうか
+
+        Returns
+        ----------
+        領域内ならばTrue
+        そうでないならばFalse
+        """
         return (self.paddy_rice_x > OBTAINABE_AREA_MIN_X and self.paddy_rice_x < OBTAINABE_AREA_MAX_X
             and self.paddy_rice_y > OBTAINABE_AREA_MIN_Y and self.paddy_rice_y < OBTAINABE_AREA_MAX_Y
             and self.paddy_rice_z < OBTAINABLE_MAX_DIS)
         
     def __del__(self):
         self.cap.release()
-        print("Closed capturing device")
+        print("Closed Capturing Device")
