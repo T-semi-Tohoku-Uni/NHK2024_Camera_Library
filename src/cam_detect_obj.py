@@ -10,17 +10,15 @@ INFERRED_WIDTH = 320
 INFERRED_HEIGHT = 256
 PADDY_RICE_RADIUS = 200.0
 DETECTABLE_MAX_DIS = 10000.0
-OBTAINABLE_MAX_DIS = 2000.0
 ROBOT_POS_X = 100
 ROBOT_POS_Y = 400
 ROBOT_POS_Z = 150
 theta_x = 30*np.pi/180
 theta_y = 0
 theta_z = 0
-OBTAINABE_AREA_MIN_X = 100
-OBTAINABE_AREA_MAX_X = 220
-OBTAINABE_AREA_MIN_Y = 80
-OBTAINABE_AREA_MAX_Y = 140
+OBTAINABE_AREA_CENTER_X = 0
+OBTAINABE_AREA_CENTER_Z = 550
+OBTAINABE_AREA_RADIUS = 100
 
 def calc_distance(r :float) -> float:
     """
@@ -179,8 +177,8 @@ class FrontCamera:
                 name = self.names[int(cls)]
                 if(name == "blueball"):
                     x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    # 長方形の短辺を籾の半径とする
-                    r = min(abs(x1-x2), abs(y1-y2))
+                    # 長方形の長辺を籾の半径とする
+                    r = max(abs(x1-x2), abs(y1-y2))
                     z = calc_distance(r)
                     # 籾が複数ある場合は最も近いものの座標を返す
                     if z < self.paddy_rice_z:
@@ -197,9 +195,7 @@ class FrontCamera:
         領域内ならばTrue
         そうでないならばFalse
         """
-        return (self.paddy_rice_x > OBTAINABE_AREA_MIN_X and self.paddy_rice_x < OBTAINABE_AREA_MAX_X
-            and self.paddy_rice_y > OBTAINABE_AREA_MIN_Y and self.paddy_rice_y < OBTAINABE_AREA_MAX_Y
-            and self.paddy_rice_z < OBTAINABLE_MAX_DIS)
+        return ((self.paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (self.paddy_rice_z-OBTAINABE_AREA_CENTER_Z)**2 < OBTAINABE_AREA_RADIUS**2)
         
     def __del__(self):
         self.p1.join()
