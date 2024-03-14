@@ -102,7 +102,7 @@ def camera_reader(_cap, out_buf, buf1_ready):
     Returns
     -----------
     """
-    while(True):
+    while _cap.isOpened():
         try:
             ret, frame = _cap.read()
             if not ret:
@@ -136,6 +136,7 @@ class FrontCamera:
         self.buf1_ready.clear()
         self.p1=multiprocessing.Process(target=camera_reader, args=(self.cap, self.buf1,self.buf1_ready), daemon=True)
         self.p1.start()
+        self.kill_flg = False
         
     def DetectedObjectCounter(self) -> int:
         """
@@ -201,5 +202,6 @@ class FrontCamera:
             and self.paddy_rice_z < OBTAINABLE_MAX_DIS)
         
     def __del__(self):
+        self.p1.join()
         self.cap.release()
         print("Closed Capturing Device")
