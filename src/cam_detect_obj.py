@@ -159,7 +159,7 @@ class FrontCamera:
         self.queue = multiprocessing.Queue()
 
         # カメラからの画像キャプチャとボールの座標検出を行うプロセスを10個生成
-        self.processes = [multiprocessing.Process(target=capture_and_detect_ball_coordinates, args=(self.queue, i, self.cap, self.model)) for i in range(10)]
+        self.processes = [multiprocessing.Process(target=capture_and_detect_ball_coordinates, args=(self.queue, i, self.cap, self.model), daemon=True) for i in range(10)]
 
         # すべてのプロセスを開始
         for process in self.processes:
@@ -167,9 +167,13 @@ class FrontCamera:
             
     def __del__(self):
         # すべてのプロセスの終了処理
+        """
         for process in self.processes:
             process.terminate()
             process.join()
+        
+        """
+        
         self.cap.release()
         print("Closed Capturing Device")
 
