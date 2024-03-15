@@ -143,7 +143,7 @@ def capture_and_detect_ball_coordinates(queue, process_id, cap, model):
          
     
 class FrontCamera:
-    def __init__(self, model_path, device_id):
+    def __init__(self, model_path, device_id, process_num):
         # Load the YOLOv8 model
         self.model = YOLO(model_path)
         
@@ -158,22 +158,14 @@ class FrontCamera:
         # プロセス間通信用のキューを作成
         self.queue = multiprocessing.Queue()
 
-        # カメラからの画像キャプチャとボールの座標検出を行うプロセスを10個生成
-        self.processes = [multiprocessing.Process(target=capture_and_detect_ball_coordinates, args=(self.queue, i, self.cap, self.model), daemon=True) for i in range(10)]
+        # カメラからの画像キャプチャとボールの座標検出を行うプロセスを複数個生成
+        self.processes = [multiprocessing.Process(target=capture_and_detect_ball_coordinates, args=(self.queue, i, self.cap, self.model), daemon=True) for i in range(process_num)]
 
         # すべてのプロセスを開始
         for process in self.processes:
             process.start()
             
     def __del__(self):
-        # すべてのプロセスの終了処理
-        """
-        for process in self.processes:
-            process.terminate()
-            process.join()
-        
-        """
-        
         self.cap.release()
         print("Closed Capturing Device")
 

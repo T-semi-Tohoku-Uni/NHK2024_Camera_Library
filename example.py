@@ -3,7 +3,7 @@ from src import FrontCamera, coordinate_transformation
 
 if __name__ == "__main__":
     model_path = 'models/20240109best.pt'
-    cam = FrontCamera(model_path, 0)
+    cam = FrontCamera(model_path, 0, 4)
 
     while True:
         try:
@@ -15,5 +15,5 @@ if __name__ == "__main__":
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
         except KeyboardInterrupt:
-            break    
+            break
     cv2.destroyAllWindows()
