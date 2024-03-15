@@ -100,7 +100,7 @@ def coordinate_transformation(w, h, dis):
     # Opencvの座標でいう(INFERRED_WIDTH/2, INFERRED_HEIGHT/2)が(0,0)になるよう平行移動
     Target = np.array([[(w-INFERRED_WIDTH/2)*dis], [(-h+INFERRED_HEIGHT/2)*dis], [dis]])
     
-    coordinate = external_param @ (internal_param_inv @ Target) 
+    coordinate = external_param @ internal_param_inv @ Target 
     
     # 水平方向，奥行方向，垂直方向の順に返す
     return int(coordinate[0,0]), int(coordinate[2,0]), int(coordinate[1,0])
@@ -116,7 +116,7 @@ def capture_and_detect_ball_coordinates(queue, process_id, cap, model):
             if not ret:
                 continue
             results = model.track(frame, save=False, imgsz=320, conf=0.5, persist=True, verbose=False)
-            annotated_frame = results[0].plot()
+            #annotated_frame = results[0].plot()
             names = results[0].names
             classes = results[0].boxes.cls
             boxes = results[0].boxes
@@ -149,7 +149,7 @@ class FrontCamera:
         self.model = YOLO(model_path)
         
         # Camera Settings
-        self.cap = cv2.VideoCapture(device_id)
+        self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)

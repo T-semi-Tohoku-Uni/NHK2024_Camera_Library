@@ -1,14 +1,19 @@
 import cv2
 from src import FrontCamera, coordinate_transformation
+import time
 
 if __name__ == "__main__":
     model_path = 'models/20240109best.pt'
     cam = FrontCamera(model_path, 0, 10)
 
+    count = 0
+    start_time = time.time()
     while True:
         try:
             items, x, y, z, is_obtainable = cam.queue.get()
+            #items, x, y, z, is_obtainable = (1,1,1,1,True)
             print(f"\nitems:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
+            count += 1
             """
             cv2.drawMarker(annotated_frame, (160,128), (0,0,255))
             cv2.imshow('image', annotated_frame)
@@ -17,4 +22,6 @@ if __name__ == "__main__":
             """
         except KeyboardInterrupt:
             break
+    end_time = time.time()
+    print(f"count / time : {count / (end_time - start_time)}")
     cv2.destroyAllWindows()
