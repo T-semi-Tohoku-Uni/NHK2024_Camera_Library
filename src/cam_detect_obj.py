@@ -17,7 +17,7 @@ theta_x = 30*np.pi/180
 theta_y = 0
 theta_z = 0
 OBTAINABE_AREA_CENTER_X = 0
-OBTAINABE_AREA_CENTER_Z = 550
+OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 100
 
 """
@@ -102,6 +102,7 @@ def coordinate_transformation(w, h, dis):
     
     coordinate = external_param @ (internal_param_inv @ Target) 
     
+    # 水平方向，奥行方向，垂直方向の順
     return int(coordinate[0,0]), int(coordinate[2,0]), int(coordinate[1,0])
 
 def capture_and_detect_ball_coordinates(queue, process_id, cap, model):
@@ -133,10 +134,10 @@ def capture_and_detect_ball_coordinates(queue, process_id, cap, model):
                     # 籾が複数ある場合は最も近いものの座標を返す
                     if z < paddy_rice_z:
                         (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
-            is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_z-OBTAINABE_AREA_CENTER_Z)**2 < OBTAINABE_AREA_RADIUS**2
+            is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
         
-            # 検出したボールの座標をキューに送信 (座標はx,z,yの順であるがxは水平，zは奥行方向)
-            queue.put((len(boxes), paddy_rice_x, paddy_rice_z, paddy_rice_y, is_obtainable, annotated_frame))    
+            # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+            queue.put((len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))    
         
         except KeyboardInterrupt:
             break
