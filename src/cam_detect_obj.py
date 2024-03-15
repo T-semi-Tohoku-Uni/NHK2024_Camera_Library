@@ -102,7 +102,7 @@ def coordinate_transformation(w, h, dis):
     
     coordinate = external_param @ (internal_param_inv @ Target) 
     
-    # 水平方向，奥行方向，垂直方向の順
+    # 水平方向，奥行方向，垂直方向の順に返す
     return int(coordinate[0,0]), int(coordinate[2,0]), int(coordinate[1,0])
 
 def capture_and_detect_ball_coordinates(queue, process_id, cap, model):

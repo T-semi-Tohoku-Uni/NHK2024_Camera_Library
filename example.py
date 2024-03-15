@@ -3,7 +3,7 @@ from src import FrontCamera, coordinate_transformation
 
 if __name__ == "__main__":
     model_path = 'models/20240109best.pt'
-    cam = FrontCamera(model_path, 0, 4)
+    cam = FrontCamera(model_path, 0, 10)
 
     while True:
         try:
