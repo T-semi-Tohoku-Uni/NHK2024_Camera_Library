@@ -1,16 +1,27 @@
 import cv2
-from src import FrontCamera, coordinate_transformation
+from src import FrontCamera, MainProcess
 import time
 
 if __name__ == "__main__":
-    model_path = 'models/20240109best.pt'
-    cam = FrontCamera(model_path, 0, 10)
+    # model_path = 'models/20240109best.pt'
+    ncnn_model_path = 'models/20240109best_ncnn_model'
+    
+    # カメラのクラス
+    cam = FrontCamera(0)
+    
+    # マルチプロセスとマルチスレッドを実行するクラス
+    mainprocess = MainProcess(ncnn_model_path, 10)
 
+    # 処理数
     count = 0
+    
+    # マルチスレッドの実行
+    mainprocess.thread_start(cam)
+    
     start_time = time.time()
     while True:
         try:
-            items, x, y, z, is_obtainable = cam.queue.get()
+            items, x, y, z, is_obtainable = mainprocess.q_results.get()
             #items, x, y, z, is_obtainable = (1,1,1,1,True)
             print(f"\nitems:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
             count += 1

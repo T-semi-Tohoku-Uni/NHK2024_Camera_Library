@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 from ultralytics import YOLO
 import multiprocessing
-import multiprocessing.sharedctypes
+import threading
 
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
@@ -19,25 +19,6 @@ theta_z = 0
 OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 100
-
-"""
-def camera_reader(_cap, out_buf, buf1_ready):
-    
-    カメラから画像を読みだしてバッファにためる
-    
-    Parameters
-    -----------
-    _cap : 
-        カメラのキャプチャ
-    out_buf : 
-        読みだした画像
-    buf1_ready : 
-        out_bufのイベントオブジェクト
-    
-    Returns
-    -----------
-    """
-        
 
 def calc_distance(r :float) -> float:
     """
@@ -105,49 +86,9 @@ def coordinate_transformation(w, h, dis):
     # 水平方向，奥行方向，垂直方向の順に返す
     return int(coordinate[0,0]), int(coordinate[2,0]), int(coordinate[1,0])
 
-def capture_and_detect_ball_coordinates(queue, process_id, cap, model):
-    """
-    カメラから画像をキャプチャし、ボールの座標を検出してキューに送信するプロセスの関数。
-    process_idはプロセスの識別子で、デバッグやログ出力に利用する。
-    """
-    while True:
-        try:
-            ret, frame = cap.read()
-            if not ret:
-                continue
-            results = model.track(frame, save=False, imgsz=320, conf=0.5, persist=True, verbose=False)
-            #annotated_frame = results[0].plot()
-            names = results[0].names
-            classes = results[0].boxes.cls
-            boxes = results[0].boxes
-            
-            paddy_rice_x = 0
-            paddy_rice_y = 0
-            paddy_rice_z = DETECTABLE_MAX_DIS
-            for box, cls in zip(boxes, classes):
-                name = names[int(cls)]
-                if(name == "blueball"):
-                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    # 長方形の長辺を籾の半径とする
-                    r = max(abs(x1-x2), abs(y1-y2))
-                    z = calc_distance(r)
-                    # 籾が複数ある場合は最も近いものの座標を返す
-                    if z < paddy_rice_z:
-                        (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
-            is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-        
-            # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-            queue.put((len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))    
-        
-        except KeyboardInterrupt:
-            break
-         
     
 class FrontCamera:
-    def __init__(self, model_path, device_id, process_num):
-        # Load the YOLOv8 model
-        self.model = YOLO(model_path)
-        
+    def __init__(self, device_id):
         # Camera Settings
         self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
@@ -155,16 +96,15 @@ class FrontCamera:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
-        # Multiprocessing
-        # プロセス間通信用のキューを作成
-        self.queue = multiprocessing.Queue()
+    def read(self):
+        ret, frame = self.cap.read()
+        return ret, frame
 
-        # カメラからの画像キャプチャとボールの座標検出を行うプロセスを複数個生成
-        self.processes = [multiprocessing.Process(target=capture_and_detect_ball_coordinates, args=(self.queue, i, self.cap, self.model), daemon=True) for i in range(process_num)]
-
-        # すべてのプロセスを開始
-        for process in self.processes:
-            process.start()
+    def release(self):
+        self.cap.release()
+    
+    def isOpened(self):
+        return self.cap.isOpened()
             
     def __del__(self):
         self.cap.release()
@@ -178,8 +118,96 @@ class FrontCamera:
         self.p1.start()
         self.kill_flg = False
         """
+
+class MainProcess:
+    def __init__(self, ncnn_model_path, process_num):
+        # Load the YOLOv8 model
+        self.model = YOLO(ncnn_model_path, task='detect')
+        self.process_num = process_num
+        self.q_frames = multiprocessing.Queue()
+        self.q_results = multiprocessing.Queue()
         
-    """  
+    # 画像を取得してキューに入れる
+    def capturing(self, q_frames, cap):
+        while True:
+            try:
+                ret, frame = cap.read()
+                if not ret:
+                    #frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3))
+                    break  
+                q_frames.put(frame)
+                print(f"read frame")
+            except KeyboardInterrupt:
+                break
+            
+    # 推論してキューに入れる
+    def inference(self, q_frames, q_results):
+        while True:
+            try:
+                frame = q_frames.get()
+                results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=False)
+                #annotated_frame = results[0].plot()
+                names = results[0].names
+                classes = results[0].boxes.cls
+                boxes = results[0].boxes
+                
+                paddy_rice_x = 0
+                paddy_rice_y = 0
+                paddy_rice_z = DETECTABLE_MAX_DIS
+                for box, cls in zip(boxes, classes):
+                    name = names[int(cls)]
+                    if(name == "blueball"):
+                        x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                        # 長方形の長辺を籾の半径とする
+                        r = max(abs(x1-x2), abs(y1-y2))
+                        z = calc_distance(r)
+                        # 籾が複数ある場合は最も近いものの座標を返す
+                        if z < paddy_rice_z:
+                            (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
+                is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+            
+                # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+                q_results.put((len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
+                print(f"inference")
+                
+            except KeyboardInterrupt:
+                break
+          
+    # inferenceをマルチプロセスで実行  
+    def process_start(self, q_frames, q_results):
+        processes = [multiprocessing.Process(target=self.inference, args=(q_frames, q_results), daemon=True) for i in range(self.process_num)]
+        for process in processes:
+            process.start()
+            print(f"{process} start")
+      
+    # カメラからの画像取得と推論をスレッドごとに分けて実行      
+    def thread_start(self, cap):
+        thread1 = threading.Thread(target=self.capturing, args=(self.q_frames, cap), daemon=True)
+        thread2 = threading.Thread(target=self.process_start, args=(self.q_frames, self.q_results), daemon=True)
+        thread1.start()
+        print("thread1 start")
+        thread2.start()
+        print("thread2 start")
+        
+
+"""
+def camera_reader(_cap, out_buf, buf1_ready):
+    
+    カメラから画像を読みだしてバッファにためる
+    
+    Parameters
+    -----------
+    _cap : 
+        カメラのキャプチャ
+    out_buf : 
+        読みだした画像
+    buf1_ready : 
+        out_bufのイベントオブジェクト
+    
+    Returns
+    -----------
+
+  
     def DetectedObjectCounter(self) -> int:
         
         検出したオブジェクト数を返す
@@ -200,8 +228,9 @@ class FrontCamera:
             self.boxes = results[0].boxes
         finally:
             return len(self.boxes)
-    """
-    """
+
+
+
     def ObjectPosition(self):
         
         籾の位置を返す
@@ -230,9 +259,8 @@ class FrontCamera:
                         (self.paddy_rice_x, self.paddy_rice_y, self.paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
         finally:
             return int(self.paddy_rice_x), int(self.paddy_rice_y), int(self.paddy_rice_z)
-    """
-    
-    """
+
+
     def IsObtainable(self):
         
         籾をピックアップできる領域内に籾が存在するかどうか
