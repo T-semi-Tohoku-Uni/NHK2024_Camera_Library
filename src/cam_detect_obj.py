@@ -110,21 +110,13 @@ class FrontCamera:
         self.cap.release()
         print("Closed Capturing Device")
 
-        """
-        self.buf1 = multiprocessing.sharedctypes.RawArray('B',FRAME_WIDTH*FRAME_HEIGHT*3)
-        self.buf1_ready = multiprocessing.Event()
-        self.buf1_ready.clear()
-        self.p1=multiprocessing.Process(target=camera_reader, args=(self.cap, self.buf1,self.buf1_ready), daemon=True)
-        self.p1.start()
-        self.kill_flg = False
-        """
-
 class MainProcess:
-    def __init__(self, ncnn_model_path, process_num):
+    def __init__(self, model_path, process_num):
         # Load the YOLOv8 model
-        self.model = YOLO(ncnn_model_path, task='detect')
+        # self.model = YOLO(ncnn_model_path, task='detect')
+        self.model = YOLO(model_path)
         self.process_num = process_num
-        self.q_frames = multiprocessing.Queue()
+        self.q_frames = multiprocessing.Queue(maxsize=10)
         self.q_results = multiprocessing.Queue()
         
     # 画像を取得してキューに入れる
@@ -145,7 +137,7 @@ class MainProcess:
         while True:
             try:
                 frame = q_frames.get()
-                results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=False)
+                results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=True)
                 #annotated_frame = results[0].plot()
                 names = results[0].names
                 classes = results[0].boxes.cls

@@ -3,14 +3,14 @@ from src import FrontCamera, MainProcess
 import time
 
 if __name__ == "__main__":
-    # model_path = 'models/20240109best.pt'
-    ncnn_model_path = 'models/20240109best_ncnn_model'
+    #ncnn_model_path = 'models/20240109best_ncnn_model'
+    model_path = 'models/20240109best.pt'
     
     # カメラのクラス
     cam = FrontCamera(0)
     
     # マルチプロセスとマルチスレッドを実行するクラス
-    mainprocess = MainProcess(ncnn_model_path, 10)
+    mainprocess = MainProcess(model_path, 1)
 
     # 処理数
     count = 0
