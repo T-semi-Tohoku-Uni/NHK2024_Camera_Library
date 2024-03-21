@@ -9,8 +9,8 @@ if __name__ == "__main__":
     # カメラのクラス
     cam = FrontCamera(0)
     
-    # マルチプロセスとマルチスレッドを実行するクラス
-    mainprocess = MainProcess(model_path, 1)
+    # メインプロセスを実行するクラス
+    mainprocess = MainProcess(model_path)
 
     # 処理数
     count = 0
