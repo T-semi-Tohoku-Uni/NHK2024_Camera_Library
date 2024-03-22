@@ -33,6 +33,32 @@ OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 80
 
+def calc_circularity(cnt :np.ndarray) -> float:
+    '''
+    円形度を求める
+
+    Parameters
+    ----------
+    cnt : np.ndarray
+        輪郭の(x,y)座標の配列
+
+    Returns
+    -------
+    cir : float
+        円形度
+
+    '''
+    # 面積
+    area = cv2.contourArea(cnt)
+    # 周囲長
+    length = cv2.arcLength(cnt, True)
+    # 円形度を求める
+    try:
+        cir = 4*np.pi*area/length/length
+    except ZeroDivisionError:
+        cir = 0
+    return cir
+
 def calc_distance(r :float) -> float:
     """
     球の半径から距離を計算する
@@ -85,7 +111,6 @@ def coordinate_transformation(w, h, dis):
         垂直方向 [mm]
     
     """
-    print(f"w:{w}, h:{h}, dis:{dis}")
     internal_param_inv = np.array([[0.0037037, 0, 0], [0, 0.0037037, 0], [0, 0, 1] ,[0, 0, 1/dis]])
     external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), CAMERA_POS_X],
                       [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), CAMERA_POS_Y],
@@ -129,9 +154,13 @@ class MainProcess:
         self.q_frames = queue.Queue(maxsize=10)
         self.q_results = queue.Queue(maxsize=10)
         # maskの値を設定する
-        self.lower_mask = np.array([130, 50, 50])
-        self.upper_mask = np.array([175, 255, 255])
-    
+        self.blue_lower_mask = np.array([130, 50, 50])
+        self.blue_upper_mask = np.array([175, 255, 255])
+        self.purple_lower_mask = np.array([175,50,50])
+        self.purple_upper_mask = np.array([230,255,255])
+        self.red_lower_mask = np.array([230,50,50])
+        self.red_upper_mask = np.array([255,255,255])
+        
     # 画像を取得してキューに入れる
     def capturing(self, q_frames, cap):
         while True:
@@ -150,20 +179,36 @@ class MainProcess:
         while True:
             try:
                 frame = q_frames.get()
-                # 画像をHSVに変換
-                #hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV_FULL)
-                
-                # 指定したHSVの値でマスクを作成する
-                #mask = cv2.inRange(hsv, self.lower_mask, self.upper_mask)
                 
                 # グレースケール化
-                mask = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                
+                # カメラ画像をHSVに変換
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV_FULL)
+                
+                # 指定したHSVの値でマスクを作成する
+                mask = cv2.inRange(hsv, self.blue_lower_mask, self.blue_upper_mask)
+                # マスクを反転
+                # mask = cv2.bitwise_not(mask)
+                # マスクを除いたグレースケール画像を生成
+                # gray = cv2.bitwise_or(gray, mask)
                 
                 # メディアンフィルタを適用する。
-                mask = cv2.medianBlur(mask, ksize=5)
+                #bimg = cv2.medianBlur(gray, ksize=9)
                 
+                # 輪郭検出
+                contours, hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                if len(contours) > 0:
+                    for i, cnt in enumerate(contours):
+                        if calc_circularity(cnt)>0.4:
+                            (x,y),r = cv2.minEnclosingCircle(cnt)
+                            cv2.circle(frame,(int(x),int(y)),int(r),(0,255,0),2)
+                q_results.put((frame, len(contours), x, y, r, False))
+                
+                """
                 # ハフ変換
-                circles = cv2.HoughCircles(mask,cv2.HOUGH_GRADIENT,1,100,param1=100,param2=50,minRadius=10,maxRadius=int(FRAME_WIDTH/2))
+                circles = cv2.HoughCircles(bimg,cv2.HOUGH_GRADIENT,1,100,param1=100,param2=30,minRadius=0,maxRadius=int(FRAME_WIDTH/3))
                 
                 paddy_rice_x = 0
                 paddy_rice_y = 0
@@ -175,11 +220,14 @@ class MainProcess:
                     #デバッグ用　画面に円を表示する準備
                     for i in circles[0,:]:
                         cv2.circle(frame,(i[0],i[1]),i[2],(0,255,0),2)
-                        
+                    
+                    color_boxes = [frame[h-r:h+r,w-r:w+r] for w,h,r in zip(circles[0,:,0],circles[0,:,1],circles[0,:,2])]
+                    Hues = [color_box.T[0].flatten().mean() for color_box in color_boxes]
+                    print(Hues)
                     target = np.argmax(circles[0,:,2], axis=0)
                     (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int(circles[0,target,0]), int(circles[0,target,1]), calc_distance(circles[0,target,2]))
                     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-                    
+                
                 except TypeError:
                     # len(circles)が検出数になるように
                     circles = np.array([[]])
@@ -187,6 +235,7 @@ class MainProcess:
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 q_results.put((frame, len(circles[0]), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
                 print(f"image processing")
+                """
                 
             except KeyboardInterrupt:
                 break
