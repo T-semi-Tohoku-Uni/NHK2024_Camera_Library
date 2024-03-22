@@ -21,18 +21,22 @@ if __name__ == "__main__":
     start_time = time.time()
     while True:
         try:
-            items, x, y, z, is_obtainable = mainprocess.q_results.get()
-            #items, x, y, z, is_obtainable = (1,1,1,1,True)
+            frame, items, x, y, z, is_obtainable = mainprocess.q_results.get()
+            #_, items, x, y, z, is_obtainable = (1,1,1,1,True)
             print(f"\nitems:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
             count += 1
-            """
-            cv2.drawMarker(annotated_frame, (160,128), (0,0,255))
-            cv2.imshow('image', annotated_frame)
+            
+            cv2.drawMarker(frame, (160,128), (0,0,255))
+            cv2.imshow('frame', frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
-            """
+            
         except KeyboardInterrupt:
             break
+    cam.release()
+    mainprocess.finish()
     end_time = time.time()
     print(f"count / time : {count / (end_time - start_time)}")
+    
+    
     cv2.destroyAllWindows()

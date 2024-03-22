@@ -4,21 +4,34 @@ from ultralytics import YOLO
 import threading
 import queue
 
+# カメラからの画像の幅と高さ[pxl]
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
+
+# YOLO推論後の出力画像の幅と高さ[pxl]
 INFERRED_WIDTH = 320
 INFERRED_HEIGHT = 256
-PADDY_RICE_RADIUS = 200.0
+
+# 籾の半径[mm]
+PADDY_RICE_RADIUS = 100.0
+
+# 検出可能最大距離[mm]
 DETECTABLE_MAX_DIS = 10000.0
-ROBOT_POS_X = 100
-ROBOT_POS_Y = 400
-ROBOT_POS_Z = 150
+
+# ロボットの中心位置を原点とした時のカメラの位置[mm]
+CAMERA_POS_X = 100
+CAMERA_POS_Y = 400
+CAMERA_POS_Z = 150
+
+# ロボット座標におけるカメラの傾き[rad]
 theta_x = 30*np.pi/180
 theta_y = 0
 theta_z = 0
+
+# アームのファンで吸い込めるエリアの中心と半径[mm]
 OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Y = 550
-OBTAINABE_AREA_RADIUS = 100
+OBTAINABE_AREA_RADIUS = 80
 
 def calc_distance(r :float) -> float:
     """
@@ -34,7 +47,7 @@ def calc_distance(r :float) -> float:
     dis : float
         カメラから球までの距離[mm](キャリブレーションを用いた値)
     """
-    pxl = INFERRED_HEIGHT
+    pxl = FRAME_HEIGHT
     # y方向の焦点距離(inrofの時のBufferlo web camera)
     # fy = 470
     # y方向の焦点距離(Logi C615n)
@@ -72,14 +85,15 @@ def coordinate_transformation(w, h, dis):
         垂直方向 [mm]
     
     """
+    print(f"w:{w}, h:{h}, dis:{dis}")
     internal_param_inv = np.array([[0.0037037, 0, 0], [0, 0.0037037, 0], [0, 0, 1] ,[0, 0, 1/dis]])
-    external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), ROBOT_POS_X],
-                      [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), ROBOT_POS_Y],
-                      [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), ROBOT_POS_Z],
+    external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), CAMERA_POS_X],
+                      [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), CAMERA_POS_Y],
+                      [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), CAMERA_POS_Z],
                       [0, 0, 0, 1]])
     
-    # Opencvの座標でいう(INFERRED_WIDTH/2, INFERRED_HEIGHT/2)が(0,0)になるよう平行移動
-    Target = np.array([[(w-INFERRED_WIDTH/2)*dis], [(-h+INFERRED_HEIGHT/2)*dis], [dis]])
+    # Opencvの座標でいう(FRAME_WIDTH/2, FRAME_HEIGHT/2)が(0,0)になるよう平行移動
+    Target = np.array([[(w-FRAME_WIDTH/2)*dis], [(-h+FRAME_HEIGHT/2)*dis], [dis]])
     
     coordinate = external_param @ internal_param_inv @ Target 
     
@@ -101,13 +115,11 @@ class FrontCamera:
 
     def release(self):
         self.cap.release()
+        print("Closed Capturing Device")
     
     def isOpened(self):
         return self.cap.isOpened()
-            
-    def __del__(self):
-        self.cap.release()
-        print("Closed Capturing Device")
+        
 
 class MainProcess:
     def __init__(self, model_path):
@@ -117,8 +129,8 @@ class MainProcess:
         self.q_frames = queue.Queue(maxsize=10)
         self.q_results = queue.Queue(maxsize=10)
         # maskの値を設定する
-        self.lower_mask = np.array([90, 50, 50])
-        self.upper_mask = np.array([170, 255, 255])
+        self.lower_mask = np.array([130, 50, 50])
+        self.upper_mask = np.array([175, 255, 255])
     
     # 画像を取得してキューに入れる
     def capturing(self, q_frames, cap):
@@ -132,39 +144,45 @@ class MainProcess:
                 print(f"read frame")
             except KeyboardInterrupt:
                 break
-    """      
+          
     # 画像処理をしてキューに入れる
     def image_processing(self, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
                 # 画像をHSVに変換
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV_FULL)
+                #hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV_FULL)
                 
                 # 指定したHSVの値でマスクを作成する
-                mask = cv2.inRange(hsv, self.lower_mask, self.upper_mask)
+                #mask = cv2.inRange(hsv, self.lower_mask, self.upper_mask)
+                
+                # グレースケール化
+                mask = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 
                 # メディアンフィルタを適用する。
                 mask = cv2.medianBlur(mask, ksize=5)
                 
                 # ハフ変換
-                circles = cv2.HoughCircles(mask,cv2.HOUGH_GRADIENT,1,20,param1=50,param2=30,minRadius=0,maxRadius=0)
-                if circles != None:
-                    circles = np.uint16(np.around(circles))
-                else:
-                    circles = np.array([[]])
+                circles = cv2.HoughCircles(mask,cv2.HOUGH_GRADIENT,1,100,param1=100,param2=50,minRadius=10,maxRadius=int(FRAME_WIDTH/2))
                 
                 paddy_rice_x = 0
                 paddy_rice_y = 0
                 paddy_rice_z = DETECTABLE_MAX_DIS
-                for i in circles[0,:]:
-                    z = calc_distance(i[2])
-                    if z < paddy_rice_z:
-                        (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int(i[0]), int(i[1]), z)
-                is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-                
-                #デバッグ用　画面に円を表示する準備
-                cv2.circle(frame,(int(paddy_rice_x),int(paddy_rice_y)),int(paddy_rice_z),(0,255,0),2)
+                is_obtainable = False
+                try:
+                    circles = np.uint16(np.around(circles))
+                    
+                    #デバッグ用　画面に円を表示する準備
+                    for i in circles[0,:]:
+                        cv2.circle(frame,(i[0],i[1]),i[2],(0,255,0),2)
+                        
+                    target = np.argmax(circles[0,:,2], axis=0)
+                    (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int(circles[0,target,0]), int(circles[0,target,1]), calc_distance(circles[0,target,2]))
+                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+                    
+                except TypeError:
+                    # len(circles)が検出数になるように
+                    circles = np.array([[]])
                 
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 q_results.put((frame, len(circles[0]), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
@@ -172,14 +190,15 @@ class MainProcess:
                 
             except KeyboardInterrupt:
                 break
-    """ 
+    
+    """
     # 推論してキューに入れる
     def inference(self, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
                 results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=True)
-                #annotated_frame = results[0].plot()
+                annotated_frame = results[0].plot()
                 names = results[0].names
                 classes = results[0].boxes.cls
                 boxes = results[0].boxes
@@ -192,7 +211,7 @@ class MainProcess:
                     if(name == "blueball"):
                         x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
                         # 長方形の長辺を籾の半径とする
-                        r = max(abs(x1-x2), abs(y1-y2))
+                        r = max(abs(x1-x2)/2, abs(y1-y2)/2)
                         z = calc_distance(r)
                         # 籾が複数ある場合は最も近いものの座標を返す
                         if z < paddy_rice_z:
@@ -200,12 +219,12 @@ class MainProcess:
                 is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
             
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-                q_results.put((len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
+                q_results.put((annotated_frame,len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
                 print(f"inference")
                 
             except KeyboardInterrupt:
                 break
-    
+    """
     
     """
     # 画像の読み込みと推論を実行してキューに入れる 
@@ -256,13 +275,25 @@ class MainProcess:
     # カメラからの画像取得と推論をスレッドごとに分けて実行      
     def thread_start(self, cap):
         thread1 = threading.Thread(target=self.capturing, args=(self.q_frames, cap), daemon=True)
-        thread2 = threading.Thread(target=self.inference, args=(self.q_frames, self.q_results), daemon=True)
+        thread2 = threading.Thread(target=self.image_processing, args=(self.q_frames, self.q_results), daemon=True)
         thread1.start()
         print("thread1 start")
         thread2.start()
         print("thread2 start")
-        
-        
+    
+    # キューを空にする
+    def finish(self):
+        while True:
+            try:
+                self.q_frames.get_nowait()
+            except queue.Empty:
+                break
+        while True:
+            try:
+                self.q_results.get_nowait()
+            except queue.Empty:
+                break
+        print("queue empty")
         
 
 """
