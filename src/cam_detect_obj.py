@@ -155,6 +155,7 @@ class FrontCamera:
     def isOpened(self):
         return self.cap.isOpened()    
 
+
 class MainProcess:
     def __init__(self, model_path):
         # Load the YOLOv8 model
@@ -163,12 +164,14 @@ class MainProcess:
         self.q_frames = queue.Queue(maxsize=10)
         self.q_results = queue.Queue(maxsize=10)
         # maskの値を設定する
-        self.blue_lower_mask = np.array([130, 50, 50])
-        self.blue_upper_mask = np.array([175, 255, 255])
-        self.purple_lower_mask = np.array([175,50,50])
+        self.blue_lower_mask = np.array([135, 100, 50])
+        self.blue_upper_mask = np.array([160, 255, 255])
+        self.purple_lower_mask = np.array([165,70,50])
         self.purple_upper_mask = np.array([230,255,255])
-        self.red_lower_mask = np.array([230,50,50])
-        self.red_upper_mask = np.array([255,255,255])
+        self.red_lower_mask_1 = np.array([0,100,50])
+        self.red_upper_mask_1 = np.array([10,255,255])
+        self.red_lower_mask_2 = np.array([230,100,50])
+        self.red_upper_mask_2 = np.array([255,255,255])
         
     # 画像を取得してキューに入れる
     def capturing(self, q_frames, cap):
@@ -188,23 +191,32 @@ class MainProcess:
         while True:
             try:
                 frame = q_frames.get()
-                
-                # カメラ画像をHSVに変換
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV_FULL)
-                
-                # メディアンフィルタを適用する。
-                bimg = cv2.medianBlur(hsv, ksize=9)
 
-                # 指定したHSVの値でマスクを作成する
-                mask = cv2.inRange(bimg, self.blue_lower_mask, self.blue_upper_mask)
+                # 出力画像にガウシアンフィルタを適用する。
+                #frame = cv2.GaussianBlur(frame, ksize=(7,7),sigmaX=0)
+
+                # カメラ画像をグレースケール化
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+                # gray画像に対し適応的閾値処理で二値化
+                bimg = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,13,10)
+
+                # モルフォロジー変換でクロージング処理
+                bimg = cv2.morphologyEx(bimg, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
+
+                # 二値化画像のサイズを出力画像に合わせる
+                bimg = cv2.cvtColor(bimg, cv2.COLOR_GRAY2BGR)
                 
-                # マスクを反転
-                # mask = cv2.bitwise_not(mask)
-                # グレースケール化
-                # gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                # マスクを除いたグレースケール画像を生成
-                # gray = cv2.bitwise_or(gray, mask)
+                # bimgとframeの画素ごとのANDをとる
+                bin = cv2.bitwise_and(bimg,frame)
+
+                # binをHSVに変換
+                hsv = cv2.cvtColor(bin, cv2.COLOR_BGR2HSV_FULL)
+
+                # HSV画像から指定したHSVの値でマスクを作成する
+                mask = cv2.inRange(hsv, self.blue_lower_mask, self.blue_upper_mask)
                 
+                items = 0
                 paddy_rice_x = 0
                 paddy_rice_y = 0
                 paddy_rice_z = DETECTABLE_MAX_DIS
@@ -222,14 +234,15 @@ class MainProcess:
                         # デバッグ用に円を描画
                         [cv2.circle(frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
                         
+                        items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
                         (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1]))
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                 
                 # 画像のタイプを揃える
-                show_mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-                show_frame = np.hstack((frame, show_mask))
-                q_results.put((show_frame, len(circles), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
+                mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+                show_frame = np.hstack((frame,bin,bimg,mask))
+                q_results.put((show_frame, items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
                 
             except KeyboardInterrupt:
                 break
