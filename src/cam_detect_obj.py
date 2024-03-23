@@ -193,16 +193,16 @@ class MainProcess:
                 frame = q_frames.get()
 
                 # 出力画像にガウシアンフィルタを適用する。
-                #frame = cv2.GaussianBlur(frame, ksize=(7,7),sigmaX=0)
+                frame = cv2.GaussianBlur(frame, ksize=(5,5),sigmaX=0)
 
                 # カメラ画像をグレースケール化
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
                 # gray画像に対し適応的閾値処理で二値化
-                bimg = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,13,10)
+                bimg = cv2.adaptiveThreshold(gray,255,cv2.ADAPTIVE_THRESH_MEAN_C,cv2.THRESH_BINARY,3,3)
 
                 # モルフォロジー変換でクロージング処理
-                bimg = cv2.morphologyEx(bimg, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)), iterations=1)
+                bimg = cv2.morphologyEx(bimg, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=1)
 
                 # 二値化画像のサイズを出力画像に合わせる
                 bimg = cv2.cvtColor(bimg, cv2.COLOR_GRAY2BGR)
@@ -241,7 +241,7 @@ class MainProcess:
                 
                 # 画像のタイプを揃える
                 mask = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-                show_frame = np.hstack((frame,bin,bimg,mask))
+                show_frame = np.hstack((frame,bimg,bin,mask))
                 q_results.put((show_frame, items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
                 
             except KeyboardInterrupt:
