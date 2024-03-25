@@ -164,13 +164,13 @@ class MainProcess:
         self.q_frames = queue.Queue(maxsize=10)
         self.q_results = queue.Queue(maxsize=10)
         # maskの値を設定する
-        self.blue_lower_mask = np.array([135, 50, 30])
+        self.blue_lower_mask = np.array([135, 50, 50])
         self.blue_upper_mask = np.array([160, 255, 255])
-        self.purple_lower_mask = np.array([165,50,30])
+        self.purple_lower_mask = np.array([165,50,50])
         self.purple_upper_mask = np.array([230,255,255])
-        self.red_lower_mask_1 = np.array([0,50,30])
+        self.red_lower_mask_1 = np.array([0,50,50])
         self.red_upper_mask_1 = np.array([10,255,255])
-        self.red_lower_mask_2 = np.array([230,50,30])
+        self.red_lower_mask_2 = np.array([230,50,50])
         self.red_upper_mask_2 = np.array([255,255,255])
         
     # 画像を取得してキューに入れる
