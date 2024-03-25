@@ -3,7 +3,6 @@ from src import FrontCamera, MainProcess
 import time
 
 if __name__ == "__main__":
-    #ncnn_model_path = 'models/20240109best_ncnn_model'
     model_path = 'models/20240109best.pt'
     
     # カメラのクラス
