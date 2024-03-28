@@ -8,6 +8,10 @@ import queue
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
 
+# YOLO推論後の出力画像の幅と高さ[pxl]
+INFERRED_WIDTH = 320
+INFERRED_HEIGHT = 256
+
 # 籾の半径[mm]
 PADDY_RICE_RADIUS = 100.0
 
@@ -139,51 +143,7 @@ class FrontCamera:
         set_fps = self.cap.set(cv2.CAP_PROP_FPS, 30)
         print(f"device_id_{device_id} fps:{self.cap.get(cv2.CAP_PROP_FPS)}, {set_fps}")
         
-        camera_parameter = [cv2.CAP_PROP_FRAME_WIDTH,
-        cv2.CAP_PROP_FRAME_HEIGHT,
-        cv2.CAP_PROP_FOURCC,
-        cv2.CAP_PROP_BRIGHTNESS,
-        cv2.CAP_PROP_CONTRAST,
-        cv2.CAP_PROP_SATURATION,
-        cv2.CAP_PROP_HUE,
-        cv2.CAP_PROP_GAIN,
-        cv2.CAP_PROP_AUTO_EXPOSURE,
-        cv2.CAP_PROP_EXPOSURE,
-        cv2.CAP_PROP_AUTO_WB,
-        cv2.CAP_PROP_WB_TEMPERATURE,
-        cv2.CAP_PROP_AUTOFOCUS,
-        ]
-
-        params = ['cv2.CAP_PROP_FRAME_WIDTH',
-        'cv2.CAP_PROP_FRAME_HEIGHT',
-        'cv2.CAP_PROP_FOURCC',
-        'cv2.CAP_PROP_BRIGHTNESS',
-        'cv2.CAP_PROP_CONTRAST',
-        'cv2.CAP_PROP_SATURATION',
-        'cv2.CAP_PROP_HUE',
-        'cv2.CAP_PROP_GAIN',
-        'cv2.CAP_PROP_AUTO_EXPOSURE',
-        'cv2.CAP_PROP_EXPOSURE',
-        'cv2.CAP_PROP_AUTO_WB',
-        'cv2.CAP_PROP_WB_TEMPERATURE',
-        'cv2.CAP_PROP_AUTOFOCUS',
-        ]
         
-        self.cap.set(cv2.CAP_PROP_BRIGHTNESS, -4.0)
-        self.cap.set(cv2.CAP_PROP_CONTRAST, 15)
-        self.cap.set(cv2.CAP_PROP_SATURATION, 32)
-        self.cap.set(cv2.CAP_PROP_HUE, 0.0)
-        self.cap.set(cv2.CAP_PROP_GAIN, -1.0)
-        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, -1.0)
-        self.cap.set(cv2.CAP_PROP_EXPOSURE, 200)
-        self.cap.set(cv2.CAP_PROP_AUTO_WB, 0.0)
-        self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 2500)
-        self.cap.set(cv2.CAP_PROP_AUTOFOCUS, -1.0)
-        
-
-        for x in range(len(params)):
-            print(f"{params[x]} = {self.cap.get(camera_parameter[x])}")
-    
     def read(self):
         ret, frame = self.cap.read()
         return ret, frame
@@ -198,16 +158,11 @@ class FrontCamera:
 
 class MainProcess:
     def __init__(self, model_path):
-        # YOLOv8 modelのロード
+        # Load the YOLOv8 model
         # self.model = YOLO(ncnn_model_path, task='detect')
         self.model = YOLO(model_path)
-        
-        # キューの宣言
-        self.upper_cam_q_frames = queue.Queue(maxsize=1)
-        self.lower_cam_q_frames = queue.Queue(maxsize=1)
-        self.rs_q_frames = queue.Queue(maxsize=1)
-        self.q_results = queue.Queue(maxsize=1)
-        
+        self.q_frames = queue.Queue(maxsize=10)
+        self.q_results = queue.Queue(maxsize=10)
         # maskの値を設定する
         self.blue_lower_mask = np.array([135, 50, 50])
         self.blue_upper_mask = np.array([160, 255, 255])
@@ -232,13 +187,13 @@ class MainProcess:
                 break
           
     # 画像処理をしてキューに入れる
-    def image_processing(self, id, q_frames, q_results):
+    def image_processing(self, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
 
                 # 出力画像にガウシアンフィルタを適用する。
-                frame = cv2.GaussianBlur(frame, ksize=(7,7),sigmaX=0)
+                frame = cv2.GaussianBlur(frame, ksize=(11,11),sigmaX=0)
 
                 # カメラ画像をHSVに変換
                 hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV_FULL)
@@ -289,13 +244,13 @@ class MainProcess:
                 hsv = cv2.cvtColor(hsv,cv2.COLOR_HSV2BGR_FULL)
                 mask = cv2.cvtColor(mask,cv2.COLOR_GRAY2BGR)
                 show_frame = np.hstack((frame,hsv,vimg,mask))
-                q_results.put((show_frame, id, items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
+                q_results.put((show_frame, items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
                 
             except KeyboardInterrupt:
                 break
     
     # 推論してキューに入れる
-    def inference(self, id, q_frames, q_results):
+    def inference(self, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
@@ -321,31 +276,192 @@ class MainProcess:
                 is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
             
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-                q_results.put((annotated_frame, id, len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
+                q_results.put((annotated_frame,len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
                 print(f"inference")
                 
             except KeyboardInterrupt:
                 break
     
     # カメラからの画像取得と推論をスレッドごとに分けて実行      
-    def thread_start(self, upper_cam, lower_cam):
-        thread_upper_cam_1 = threading.Thread(target=self.capturing, args=(self.upper_cam_q_frames, upper_cam), daemon=True)
-        thread_upper_cam_2 = threading.Thread(target=self.image_processing, args=(0, self.upper_cam_q_frames, self.q_results), daemon=True)
-        thread_lower_cam_1 = threading.Thread(target=self.capturing, args=(self.lower_cam_q_frames, lower_cam), daemon=True)
-        thread_lower_cam_2 = threading.Thread(target=self.image_processing, args=(1,self.lower_cam_q_frames, self.q_results), daemon=True)
-        
-        thread_upper_cam_1.start()
-        thread_upper_cam_2.start()
-        thread_lower_cam_1.start()
-        thread_lower_cam_2.start()
+    def thread_start(self, cap):
+        thread1 = threading.Thread(target=self.capturing, args=(self.q_frames, cap), daemon=True)
+        thread2 = threading.Thread(target=self.image_processing, args=(self.q_frames, self.q_results), daemon=True)
+        thread1.start()
+        print("thread1 start")
+        thread2.start()
+        print("thread2 start")
     
     # キューを空にする
     def finish(self):
-        for q in [self.upper_cam_q_frames,self.lower_cam_q_frames,self.q_results]:
-            while True:
-                try:
-                    q.get_nowait()
-                except queue.Empty:
-                    break
-                
+        while True:
+            try:
+                self.q_frames.get_nowait()
+            except queue.Empty:
+                break
+        while True:
+            try:
+                self.q_results.get_nowait()
+            except queue.Empty:
+                break
         print("queue empty")
+
+    """
+    # マルチプロセスで実行  
+    def process_start(self, q_results, cap):
+        processes = [multiprocessing.Process(target=self.capturing_and_inference, args=(q_results, cap), daemon=True) for i in range(self.process_num)]
+        for process in processes:
+            process.start()
+            print(f"{process} start")
+    """    
+
+    """
+    # ハフ変換
+    circles = cv2.HoughCircles(bimg,cv2.HOUGH_GRADIENT,1,100,param1=100,param2=30,minRadius=0,maxRadius=int(FRAME_WIDTH/3))
+    
+    paddy_rice_x = 0
+    paddy_rice_y = 0
+    paddy_rice_z = DETECTABLE_MAX_DIS
+    is_obtainable = False
+    try:
+        circles = np.uint16(np.around(circles))
+        
+        #デバッグ用　画面に円を表示する準備
+        for i in circles[0,:]:
+            cv2.circle(frame,(i[0],i[1]),i[2],(0,255,0),2)
+        
+        color_boxes = [frame[h-r:h+r,w-r:w+r] for w,h,r in zip(circles[0,:,0],circles[0,:,1],circles[0,:,2])]
+        Hues = [color_box.T[0].flatten().mean() for color_box in color_boxes]
+        print(Hues)
+        target = np.argmax(circles[0,:,2], axis=0)
+        (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int(circles[0,target,0]), int(circles[0,target,1]), calc_distance(circles[0,target,2]))
+        is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+    
+    except TypeError:
+        # len(circles)が検出数になるように
+        circles = np.array([[]])
+    
+    # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+    q_results.put((frame, len(circles[0]), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
+    print(f"image processing")
+    
+    """
+    
+    """
+    # 画像の読み込みと推論を実行してキューに入れる 
+    def capturing_and_inference(self, q_results, cap):
+        while True:
+            try:
+                ret, frame = cap.read()
+                if not ret:
+                    #frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3))
+                    break  
+                results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=True)
+                #annotated_frame = results[0].plot()
+                names = results[0].names
+                classes = results[0].boxes.cls
+                boxes = results[0].boxes
+                
+                paddy_rice_x = 0
+                paddy_rice_y = 0
+                paddy_rice_z = DETECTABLE_MAX_DIS
+                for box, cls in zip(boxes, classes):
+                    name = names[int(cls)]
+                    if(name == "blueball"):
+                        x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                        # 長方形の長辺を籾の半径とする
+                        r = max(abs(x1-x2), abs(y1-y2))
+                        z = calc_distance(r)
+                        # 籾が複数ある場合は最も近いものの座標を返す
+                        if z < paddy_rice_z:
+                            (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
+                is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+            
+                # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+                q_results.put((len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
+                print(f"read frame and inference")
+                
+            except KeyboardInterrupt:
+                break
+    """
+
+"""
+def camera_reader(_cap, out_buf, buf1_ready):
+    
+    カメラから画像を読みだしてバッファにためる
+    
+    Parameters
+    -----------
+    _cap : 
+        カメラのキャプチャ
+    out_buf : 
+        読みだした画像
+    buf1_ready : 
+        out_bufのイベントオブジェクト
+    
+    Returns
+    -----------
+
+
+def DetectedObjectCounter(self) -> int:
+    
+    検出したオブジェクト数を返す
+
+    Returns:
+        len(self.boxes) : int
+            検知数
+    
+    
+    try:
+        self.buf1_ready.wait()
+        img = np.reshape(self.buf1, (FRAME_HEIGHT, FRAME_WIDTH, 3))
+        self.buf1_ready.clear()
+        results = self.model.track(img, save=False, imgsz=320, conf=0.5, persist=True, verbose=False)
+        self.annotated_frame = results[0].plot()
+        self.names = results[0].names
+        self.classes = results[0].boxes.cls
+        self.boxes = results[0].boxes
+    finally:
+        return len(self.boxes)
+
+
+
+def ObjectPosition(self):
+    
+    籾の位置を返す
+
+    Returns:
+        int(self.paddy_rice_x): int
+            ロボット座標の水平方向（カメラ側を前とした時の右が正）[mm]
+        int(self.paddy_rice_y): int
+            ロボット座標の垂直方向（カメラ側を前とした時の上が正）[mm]
+        int(self.paddy_rice_z): int
+            ロボット座標の奥行方向（カメラ側を前とした時の前が正）[mm]
+    
+    try:
+        self.paddy_rice_x = 0
+        self.paddy_rice_y = 0
+        self.paddy_rice_z = DETECTABLE_MAX_DIS
+        for box, cls in zip(self.boxes, self.classes):
+            name = self.names[int(cls)]
+            if(name == "blueball"):
+                x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                # 長方形の長辺を籾の半径とする
+                r = max(abs(x1-x2), abs(y1-y2))
+                z = calc_distance(r)
+                # 籾が複数ある場合は最も近いものの座標を返す
+                if z < self.paddy_rice_z:
+                    (self.paddy_rice_x, self.paddy_rice_y, self.paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
+    finally:
+        return int(self.paddy_rice_x), int(self.paddy_rice_y), int(self.paddy_rice_z)
+
+
+def IsObtainable(self):
+    
+    籾をピックアップできる領域内に籾が存在するかどうか
+
+    Returns
+    ----------
+    領域内ならばTrue
+    そうでないならばFalse
+    
+"""
