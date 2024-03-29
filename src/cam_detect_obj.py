@@ -3,6 +3,7 @@ import cv2
 from ultralytics import YOLO
 import threading
 import queue
+import subprocess
 
 # カメラからの画像の幅と高さ[pxl]
 FRAME_WIDTH = 320
@@ -168,7 +169,7 @@ class FrontCamera:
         'cv2.CAP_PROP_WB_TEMPERATURE',
         'cv2.CAP_PROP_AUTOFOCUS',
         ]
-        
+        """
         self.cap.set(cv2.CAP_PROP_BRIGHTNESS, -4.0)
         self.cap.set(cv2.CAP_PROP_CONTRAST, 15)
         self.cap.set(cv2.CAP_PROP_SATURATION, 32)
@@ -179,11 +180,15 @@ class FrontCamera:
         self.cap.set(cv2.CAP_PROP_AUTO_WB, 0.0)
         self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 2500)
         self.cap.set(cv2.CAP_PROP_AUTOFOCUS, -1.0)
-        
+        """
 
         for x in range(len(params)):
             print(f"{params[x]} = {self.cap.get(camera_parameter[x])}")
     
+        # v4l2-ctlを用いたホワイトバランスの固定
+        cmd = 'v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 -c white_balance_temperature=4500'
+        ret = subprocess.check_output(cmd, shell=True)
+        
     def read(self):
         ret, frame = self.cap.read()
         return ret, frame
@@ -328,16 +333,19 @@ class MainProcess:
                 break
     
     # カメラからの画像取得と推論をスレッドごとに分けて実行      
-    def thread_start(self, upper_cam, lower_cam):
+    def thread_start(self, upper_cam, lower_cam=None):
         thread_upper_cam_1 = threading.Thread(target=self.capturing, args=(self.upper_cam_q_frames, upper_cam), daemon=True)
         thread_upper_cam_2 = threading.Thread(target=self.image_processing, args=(0, self.upper_cam_q_frames, self.q_results), daemon=True)
-        thread_lower_cam_1 = threading.Thread(target=self.capturing, args=(self.lower_cam_q_frames, lower_cam), daemon=True)
-        thread_lower_cam_2 = threading.Thread(target=self.image_processing, args=(1,self.lower_cam_q_frames, self.q_results), daemon=True)
-        
         thread_upper_cam_1.start()
         thread_upper_cam_2.start()
-        thread_lower_cam_1.start()
-        thread_lower_cam_2.start()
+        
+        if lower_cam is not None:
+            thread_lower_cam_1.start()
+            thread_lower_cam_2.start()
+            thread_lower_cam_1 = threading.Thread(target=self.capturing, args=(self.lower_cam_q_frames, lower_cam), daemon=True)
+            thread_lower_cam_2 = threading.Thread(target=self.image_processing, args=(1,self.lower_cam_q_frames, self.q_results), daemon=True)
+        
+        
     
     # キューを空にする
     def finish(self):

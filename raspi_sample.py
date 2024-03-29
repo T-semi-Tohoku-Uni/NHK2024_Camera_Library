@@ -20,9 +20,9 @@ if __name__ == "__main__":
     start_time = time.time()
     while True:
         try:
-            _, items, x, y, z, is_obtainable = mainprocess.q_results.get()
-            #_, items, x, y, z, is_obtainable = (1,1,1,1,True)
-            print(f"\nitems:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
+            _, id, items, x, y, z, is_obtainable = mainprocess.q_results.get()
+            #_, id, items, x, y, z, is_obtainable = (1,1,1,1,True)
+            print(f"\nid:{id}, items:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
             count += 1
             """
             cv2.drawMarker(frame, (160,128), (0,0,255))
