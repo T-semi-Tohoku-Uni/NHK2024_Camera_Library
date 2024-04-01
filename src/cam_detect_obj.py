@@ -15,8 +15,8 @@ PADDY_RICE_RADIUS = 100.0
 # 検出可能最大距離[mm]
 DETECTABLE_MAX_DIS = 10000.0
 
-# 検出した輪郭の最小面積[pxl]
-MIN_CONTOUR_AREA_THRESHOLD = 60
+# 検出した輪郭の最小面積(手前側のカメラ)[pxl]
+MIN_CONTOUR_AREA_THRESHOLD = 2000
 
 # 円形度の閾値
 CIRCULARITY_THRESHOLD=0.5
@@ -249,16 +249,16 @@ class MainProcess:
                 hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV_FULL)
 
                 # hsvの輝度成分を抽出
-                vimg = hsv[:,:,2]
+                # vimg = hsv[:,:,2]
 
                 # 輝度画像に対し適応的閾値処理で二値化
-                vimg = cv2.adaptiveThreshold(vimg,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,9,3)
+                # vimg = cv2.adaptiveThreshold(vimg,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,9,3)
 
                 # モルフォロジー変換でクロージング処理
-                vimg = cv2.morphologyEx(vimg, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
+                # vimg = cv2.morphologyEx(vimg, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
 
                 # hsvの輝度成分をvimgに変更
-                hsv[:,:,2] = vimg
+                # hsv[:,:,2] = vimg
 
                 # HSV画像から指定したHSVの値でマスクを作成する
                 # mask = cv2.inRange(hsv, np.array([0,50,50]), np.array([255,255,255]))
@@ -277,6 +277,8 @@ class MainProcess:
                 if len(contours) > 0:
                     # 小さい輪郭は誤検出として削除
                     contours = list(filter(lambda x: cv2.contourArea(x) > MIN_CONTOUR_AREA_THRESHOLD, contours))
+                    for x in contours:
+                        print(cv2.contourArea(x))
                     # 最小外接円を求める
                     circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>CIRCULARITY_THRESHOLD]
                     if len(circles) > 0:
@@ -290,10 +292,9 @@ class MainProcess:
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                 
                 # 画像のタイプを揃える
-                vimg = cv2.cvtColor(vimg, cv2.COLOR_GRAY2BGR)
                 hsv = cv2.cvtColor(hsv,cv2.COLOR_HSV2BGR_FULL)
                 mask = cv2.cvtColor(mask,cv2.COLOR_GRAY2BGR)
-                show_frame = np.hstack((frame,hsv,vimg,mask))
+                show_frame = np.hstack((frame,hsv,mask))
                 q_results.put((show_frame, id, items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
                 
             except KeyboardInterrupt:

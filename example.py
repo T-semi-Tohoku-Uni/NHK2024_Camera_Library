@@ -17,7 +17,7 @@ if __name__ == "__main__":
     count = [0,0]
     
     # マルチスレッドの実行
-    mainprocess.thread_start(cam1,cam2)
+    mainprocess.thread_start(cam1)
     
     start_time = time.time()
     while True:
