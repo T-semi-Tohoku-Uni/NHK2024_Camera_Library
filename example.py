@@ -11,18 +11,18 @@ if __name__ == "__main__":
     cam2 = FrontCamera(2)
     
     # メインプロセスを実行するクラス
-    mainprocess = MainProcess(model_path)
+    mainprocess = MainProcess(model_path,cam1,cam2)
 
     # 処理数
     count = [0,0]
     
     # マルチスレッドの実行
-    mainprocess.thread_start(cam1)
+    mainprocess.thread_start()
     
     start_time = time.time()
     while True:
         try:
-            frame, id, items, x, y, z, is_obtainable = mainprocess.q_results.get()
+            frame, id, items, x, y, z, is_obtainable = mainprocess.q_frames_list[-1].get()
             #_, id, items, x, y, z, is_obtainable = (1,1,1,1,True)
             print(f"\nid:{id}, items:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
             count[id] += 1
@@ -34,8 +34,6 @@ if __name__ == "__main__":
             
         except KeyboardInterrupt:
             break
-    cam1.release()
-    cam2.release()
     mainprocess.finish()
     end_time = time.time()
     print(f"id0 : {count[0] / (end_time - start_time)} fps")

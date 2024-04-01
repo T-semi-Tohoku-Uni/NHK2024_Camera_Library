@@ -202,16 +202,17 @@ class FrontCamera:
 
 
 class MainProcess:
-    def __init__(self, model_path):
+    def __init__(self, model_path, *args):
         # YOLOv8 modelのロード
         # self.model = YOLO(ncnn_model_path, task='detect')
         self.model = YOLO(model_path)
+ 
+        # カメラ(webカメラ、Realsense)のクラスのタプル       
+        self.cameras = args
         
-        # キューの宣言
-        self.upper_cam_q_frames = queue.Queue(maxsize=1)
-        self.lower_cam_q_frames = queue.Queue(maxsize=1)
-        self.rs_q_frames = queue.Queue(maxsize=1)
-        self.q_results = queue.Queue(maxsize=1)
+        # キューの宣言(self.q_frames_listの末尾は検出結果のフレーム、それ以外はカメラからのフレーム)
+        self.q_frames_list = []
+        [self.q_frames_list.append(queue.Queue(maxsize=1)) for i in range(len(args) + 1)]
         
         # maskの値を設定する
         self.blue_lower_mask = np.array([135, 50, 50])
@@ -333,23 +334,20 @@ class MainProcess:
                 break
     
     # カメラからの画像取得と推論をスレッドごとに分けて実行      
-    def thread_start(self, upper_cam, lower_cam=None):
-        thread_upper_cam_1 = threading.Thread(target=self.capturing, args=(self.upper_cam_q_frames, upper_cam), daemon=True)
-        thread_upper_cam_2 = threading.Thread(target=self.image_processing, args=(0, self.upper_cam_q_frames, self.q_results), daemon=True)
-        thread_upper_cam_1.start()
-        thread_upper_cam_2.start()
-        
-        if lower_cam is not None:
-            thread_lower_cam_1.start()
-            thread_lower_cam_2.start()
-            thread_lower_cam_1 = threading.Thread(target=self.capturing, args=(self.lower_cam_q_frames, lower_cam), daemon=True)
-            thread_lower_cam_2 = threading.Thread(target=self.image_processing, args=(1,self.lower_cam_q_frames, self.q_results), daemon=True)
-        
+    def thread_start(self):
+        for id,cam in enumerate(self.cameras):
+            thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
+            thread_detecting = threading.Thread(target=self.image_processing, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            thread_capturing.start()
+            thread_detecting.start()
         
     
     # キューを空にする
     def finish(self):
-        for q in [self.upper_cam_q_frames,self.lower_cam_q_frames,self.q_results]:
+        for c in self.cameras:
+            c.release()
+        
+        for q in self.q_frames_list:
             while True:
                 try:
                     q.get_nowait()
@@ -357,3 +355,7 @@ class MainProcess:
                     break
                 
         print("queue empty")
+        
+        end_time = time.time()
+        print(f"id0 : {count[0] / (end_time - start_time)} fps")
+        print(f"id1 : {count[1] / (end_time - start_time)} fps")

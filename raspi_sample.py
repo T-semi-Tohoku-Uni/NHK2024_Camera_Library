@@ -9,18 +9,18 @@ if __name__ == "__main__":
     cam = FrontCamera(0)
     
     # メインプロセスを実行するクラス
-    mainprocess = MainProcess(model_path)
+    mainprocess = MainProcess(model_path, cam)
 
     # 処理数
     count = 0
     
     # マルチスレッドの実行
-    mainprocess.thread_start(cam)
+    mainprocess.thread_start()
     
     start_time = time.time()
     while True:
         try:
-            _, id, items, x, y, z, is_obtainable = mainprocess.q_results.get()
+            _, id, items, x, y, z, is_obtainable = mainprocess.q_frames_list[-1].get()
             #_, id, items, x, y, z, is_obtainable = (1,1,1,1,True)
             print(f"\nid:{id}, items:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
             count += 1
@@ -33,7 +33,7 @@ if __name__ == "__main__":
             
         except KeyboardInterrupt:
             break
-    cam.release()
+    
     mainprocess.finish()
     end_time = time.time()
     print(f"count / time : {count / (end_time - start_time)}")
