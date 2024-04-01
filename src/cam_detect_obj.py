@@ -186,8 +186,8 @@ class FrontCamera:
             print(f"{params[x]} = {self.cap.get(camera_parameter[x])}")
     
         # v4l2-ctlを用いたホワイトバランスの固定
-        cmd = 'v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 -c white_balance_temperature=4500'
-        ret = subprocess.check_output(cmd, shell=True)
+        #cmd = 'v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 -c white_balance_temperature=4500'
+        #ret = subprocess.check_output(cmd, shell=True)
         
     def read(self):
         ret, frame = self.cap.read()
