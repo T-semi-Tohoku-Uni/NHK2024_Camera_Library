@@ -131,8 +131,8 @@ def coordinate_transformation(w, h, dis):
 class FrontCamera:
     def __init__(self, device_id):
         # Camera Settings
-        # self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
-        self.cap = cv2.VideoCapture(device_id)
+        self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
+        # self.cap = cv2.VideoCapture(device_id)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
@@ -277,8 +277,7 @@ class MainProcess:
                 if len(contours) > 0:
                     # 小さい輪郭は誤検出として削除
                     contours = list(filter(lambda x: cv2.contourArea(x) > MIN_CONTOUR_AREA_THRESHOLD, contours))
-                    for x in contours:
-                        print(cv2.contourArea(x))
+                    
                     # 最小外接円を求める
                     circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>CIRCULARITY_THRESHOLD]
                     if len(circles) > 0:
