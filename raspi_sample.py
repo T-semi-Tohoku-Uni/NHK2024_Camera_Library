@@ -10,9 +10,6 @@ if __name__ == "__main__":
     
     # メインプロセスを実行するクラス
     mainprocess = MainProcess(model_path, cam)
-
-    # 処理数
-    count = 0
     
     # マルチスレッドの実行
     mainprocess.thread_start()
@@ -23,7 +20,6 @@ if __name__ == "__main__":
             _, id, items, x, y, z, is_obtainable = mainprocess.q_frames_list[-1].get()
             #_, id, items, x, y, z, is_obtainable = (1,1,1,1,True)
             print(f"\nid:{id}, items:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
-            count += 1
             """
             cv2.drawMarker(frame, (160,128), (0,0,255))
             cv2.imshow('frame', frame)
@@ -35,8 +31,5 @@ if __name__ == "__main__":
             break
     
     mainprocess.finish()
-    end_time = time.time()
-    print(f"count / time : {count / (end_time - start_time)}")
-    
     
     cv2.destroyAllWindows()

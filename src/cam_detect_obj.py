@@ -3,7 +3,7 @@ import cv2
 from ultralytics import YOLO
 import threading
 import queue
-import subprocess
+import time
 
 # カメラからの画像の幅と高さ[pxl]
 FRAME_WIDTH = 320
@@ -214,6 +214,10 @@ class MainProcess:
         self.q_frames_list = []
         [self.q_frames_list.append(queue.Queue(maxsize=1)) for i in range(len(args) + 1)]
         
+        # カメラ毎の処理数のリスト
+        self.counters = []
+        [self.counters.append(0) for i in range(len(args))]
+        
         # maskの値を設定する
         self.blue_lower_mask = np.array([135, 50, 50])
         self.blue_upper_mask = np.array([160, 255, 255])
@@ -233,7 +237,6 @@ class MainProcess:
                     # frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3))
                     continue
                 q_frames.put(frame)
-                print(f"read frame")
             except KeyboardInterrupt:
                 break
           
@@ -295,6 +298,11 @@ class MainProcess:
                 hsv = cv2.cvtColor(hsv,cv2.COLOR_HSV2BGR_FULL)
                 mask = cv2.cvtColor(mask,cv2.COLOR_GRAY2BGR)
                 show_frame = np.hstack((frame,hsv,mask))
+                
+                # 処理数に加算
+                self.counters[id] += 1
+                
+                # キューに入れる
                 q_results.put((show_frame, id, items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
                 
             except KeyboardInterrupt:
@@ -326,9 +334,12 @@ class MainProcess:
                             (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
                 is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
             
+            
+                # 処理数に加算
+                self.counters[id] += 1
+                
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 q_results.put((annotated_frame, id, len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
-                print(f"inference")
                 
             except KeyboardInterrupt:
                 break
@@ -340,12 +351,16 @@ class MainProcess:
             thread_detecting = threading.Thread(target=self.image_processing, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
             thread_capturing.start()
             thread_detecting.start()
+            
+        self.start_time = time.time()
         
     
     # キューを空にする
     def finish(self):
-        for c in self.cameras:
+        end_time = time.time()
+        for i,c in enumerate(self.cameras):
             c.release()
+            print(f"id{i} : {self.counters[i] / (end_time - self.start_time)} fps")
         
         for q in self.q_frames_list:
             while True:
@@ -355,7 +370,3 @@ class MainProcess:
                     break
                 
         print("queue empty")
-        
-        end_time = time.time()
-        print(f"id0 : {count[0] / (end_time - start_time)} fps")
-        print(f"id1 : {count[1] / (end_time - start_time)} fps")
