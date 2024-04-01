@@ -1,16 +1,17 @@
 import cv2
-from src import FrontCamera, MainProcess
+from src import FrontCamera, RearCamera, MainProcess
 
 if __name__ == "__main__":
     #ncnn_model_path = 'models/20240109best_ncnn_model'
     model_path = 'models/20240109best.pt'
     
     # カメラのクラス
-    cam1 = FrontCamera(0)
-    cam2 = FrontCamera(2)
+    #cam1 = FrontCamera(0)
+    #cam2 = FrontCamera(2)
+    rs = RearCamera()
     
     # メインプロセスを実行するクラス
-    mainprocess = MainProcess(model_path,cam1,cam2)
+    mainprocess = MainProcess(model_path,rs)
     
     # マルチスレッドの実行
     mainprocess.thread_start()

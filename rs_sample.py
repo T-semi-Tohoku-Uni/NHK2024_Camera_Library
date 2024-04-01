@@ -73,7 +73,8 @@ try:
         # Show images
         cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
         cv2.imshow('RealSense', images)
-        cv2.waitKey(1)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
 
 finally:
 
