@@ -302,7 +302,7 @@ class MainProcess:
                 # 処理数に加算
                 self.counters[id] += 1
                 
-                # キューに入れる
+                # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 q_results.put((show_frame, id, items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
                 
             except KeyboardInterrupt:
@@ -344,7 +344,7 @@ class MainProcess:
             except KeyboardInterrupt:
                 break
     
-    # カメラからの画像取得と推論をスレッドごとに分けて実行      
+    # カメラからの画像取得と画像処理をスレッドごとに分けて実行      
     def thread_start(self):
         for id,cam in enumerate(self.cameras):
             thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
@@ -354,6 +354,15 @@ class MainProcess:
             
         self.start_time = time.time()
         
+    # カメラからの画像取得と推論をスレッドごとに分けて実行
+    def all_yolo_thread_start(self):
+        for id,cam in enumerate(self.cameras):
+            thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
+            thread_detecting = threading.Thread(target=self.inference, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            thread_capturing.start()
+            thread_detecting.start()
+            
+        self.start_time = time.time()
     
     # キューを空にする
     def finish(self):
