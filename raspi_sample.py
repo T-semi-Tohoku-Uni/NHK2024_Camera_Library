@@ -1,16 +1,17 @@
 import cv2
-from src import UpperCamera, MainProcess
+from src import UpperCamera,LowerCamera,RearCamera,MainProcess
 import time
 
 if __name__ == "__main__":
     model_path = 'models/20240109best.pt'
     
     # カメラのクラス
-    cam = UpperCamera(0)
-    
+    cam0 = UpperCamera(0)
+    cam1 = LowerCamera(2)
+    rs = RearCamera()
     
     # メインプロセスを実行するクラス
-    mainprocess = MainProcess(model_path, cam, cam, cam)
+    mainprocess = MainProcess(model_path, cam0, cam1, rs)
     
     # マルチスレッドの実行
     mainprocess.thread_start()
@@ -19,15 +20,14 @@ if __name__ == "__main__":
     while True:
         try:
             _, id, output_data = mainprocess.q_frames_list[-1].get()
-            items,x,y,z,is_obtainable = output_data
-            #_, id, items, x, y, z, is_obtainable = (1,1,1,1,True)
-            print(f"\n{id=}, {items=}, {x=}, {y=}, {z=}, {is_obtainable=}")
-            """
-            cv2.drawMarker(frame, (160,128), (0,0,255))
-            cv2.imshow('frame', frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-            """
+            if id==0:   #UpperCamera
+                items,x,y,z,is_obtainable = output_data
+                print(f"\n{id=}, {items=}, {x=}, {y=}, {z=}, {is_obtainable=}")
+            elif id==1:   #LowerCamera
+                items,x,y,z,is_obtainable = output_data
+                print(f"\n{id=}, {items=}, {x=}, {y=}, {z=}, {is_obtainable=}")
+            elif id==2:   #Realsense
+                print(f"\n{id=}")
             
         except KeyboardInterrupt:
             break
