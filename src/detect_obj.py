@@ -1,14 +1,27 @@
 import numpy as np
 import cv2
 from ultralytics import YOLO
-import pyrealsense2 as rs
 import threading
 import queue
 import time
+from .camera import UpperCamera,LowerCamera,RearCamera
 
-# カメラからの画像の幅と高さ[pxl]
+NUMBER_OF_CAMERAS = 3
+# Camera Frame Width and Height[pxl]
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
+
+# depthのヒストグラムの刻み幅[mm]
+DISTANCE_INTERVAL = 20
+
+# ball in silo 判定の許容範囲[mm]
+BALL_IN_SILO_RANGE = 150
+
+# realsense d435iのdepth最大/最小距離[mm]
+RS_MAX_DISTANCE = 5000
+RS_MIN_DISTANCE = 100
+
+BINS=[i for i in range(RS_MIN_DISTANCE,RS_MAX_DISTANCE+RS_MIN_DISTANCE,DISTANCE_INTERVAL)]
 
 # 籾の半径[mm]
 PADDY_RICE_RADIUS = 100.0
@@ -129,148 +142,47 @@ def coordinate_transformation(w, h, dis):
     # 水平方向，奥行方向，垂直方向の順に返す
     return int(coordinate[0,0]), int(coordinate[2,0]), int(coordinate[1,0])
 
-class FrontCamera:
-    def __init__(self, device_id):
-        # Camera Settings
-        self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
-        # self.cap = cv2.VideoCapture(device_id)
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        set_fps = self.cap.set(cv2.CAP_PROP_FPS, 30)
-        print(f"device_id_{device_id} fps:{self.cap.get(cv2.CAP_PROP_FPS)}, {set_fps}")
+# 大津の手法をdepthに適用
+def threshold_otsu(hist, min_value=0, max_value=10):
+
+    s_max = (0,-10)
+
+    for th in range(min_value, max_value):
+        # クラス1とクラス2の画素数を計算
+        n1 = sum(hist[:th])
+        n2 = sum(hist[th:])
         
-        camera_parameter = [cv2.CAP_PROP_FRAME_WIDTH,
-        cv2.CAP_PROP_FRAME_HEIGHT,
-        cv2.CAP_PROP_FOURCC,
-        cv2.CAP_PROP_BRIGHTNESS,
-        cv2.CAP_PROP_CONTRAST,
-        cv2.CAP_PROP_SATURATION,
-        cv2.CAP_PROP_HUE,
-        cv2.CAP_PROP_GAIN,
-        cv2.CAP_PROP_AUTO_EXPOSURE,
-        cv2.CAP_PROP_EXPOSURE,
-        cv2.CAP_PROP_AUTO_WB,
-        cv2.CAP_PROP_WB_TEMPERATURE,
-        cv2.CAP_PROP_AUTOFOCUS,
-        ]
+        # クラス1とクラス2のdepthヒストグラム値(depth値ではない)の平均を計算
+        if n1 == 0 : mu1 = 0
+        else : mu1 = sum([i * hist[i] for i in range(0,th)]) / n1   
+        if n2 == 0 : mu2 = 0
+        else : mu2 = sum([i * hist[i] for i in range(th, max_value)]) / n2
 
-        params = ['cv2.CAP_PROP_FRAME_WIDTH',
-        'cv2.CAP_PROP_FRAME_HEIGHT',
-        'cv2.CAP_PROP_FOURCC',
-        'cv2.CAP_PROP_BRIGHTNESS',
-        'cv2.CAP_PROP_CONTRAST',
-        'cv2.CAP_PROP_SATURATION',
-        'cv2.CAP_PROP_HUE',
-        'cv2.CAP_PROP_GAIN',
-        'cv2.CAP_PROP_AUTO_EXPOSURE',
-        'cv2.CAP_PROP_EXPOSURE',
-        'cv2.CAP_PROP_AUTO_WB',
-        'cv2.CAP_PROP_WB_TEMPERATURE',
-        'cv2.CAP_PROP_AUTOFOCUS',
-        ]
-        """
-        self.cap.set(cv2.CAP_PROP_BRIGHTNESS, -4.0)
-        self.cap.set(cv2.CAP_PROP_CONTRAST, 15)
-        self.cap.set(cv2.CAP_PROP_SATURATION, 32)
-        self.cap.set(cv2.CAP_PROP_HUE, 0.0)
-        self.cap.set(cv2.CAP_PROP_GAIN, -1.0)
-        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, -1.0)
-        self.cap.set(cv2.CAP_PROP_EXPOSURE, 200)
-        self.cap.set(cv2.CAP_PROP_AUTO_WB, 0.0)
-        self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 2500)
-        self.cap.set(cv2.CAP_PROP_AUTOFOCUS, -1.0)
-        """
+        # クラス間分散の分子を計算
+        s = n1 * n2 * (mu1 - mu2) ** 2
 
-        for x in range(len(params)):
-            print(f"{params[x]} = {self.cap.get(camera_parameter[x])}")
+        # クラス間分散の分子が最大のとき、クラス間分散の分子と閾値を記録
+        if s > s_max[1]:
+            s_max = (th, s)
     
-        # v4l2-ctlを用いたホワイトバランスの固定
-        #cmd = 'v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 -c white_balance_temperature=4500'
-        #ret = subprocess.check_output(cmd, shell=True)
-            
-    def read(self):
-        ret, frame = self.cap.read()
-        return ret, frame
-
-    def release(self):
-        self.cap.release()
-        print("Closed Capturing Device")
-    
-    def isOpened(self):
-        return self.cap.isOpened()
-
-class RearCamera:
-    def __init__(self):
-        if len(rs.context().query_devices()) == 1:
-            # Configure depth and color streams
-            self.pipeline = rs.pipeline()
-            config = rs.config()
-
-            # Get device product line for setting a supporting resolution
-            pipeline_wrapper = rs.pipeline_wrapper(self.pipeline)
-            pipeline_profile = config.resolve(pipeline_wrapper)
-            device = pipeline_profile.get_device()
-            
-            found_rgb = False
-            for s in device.sensors:
-                if s.get_info(rs.camera_info.name) == 'RGB Camera':
-                    found_rgb = True
-                    break
-            if not found_rgb:
-                print("The demo requires Depth camera with Color sensor")
-                exit(0)
-
-            config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
-            config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-            
-            # Start streaming
-            self.pipeline.start(config)
-            print(f"{rs.context().query_devices()} fps:30")
-        
-    def read(self):
-        # Wait for a coherent pair of frames: depth and color
-        frames = self.pipeline.wait_for_frames()
-        depth_frame = frames.get_depth_frame()
-        color_frame = frames.get_color_frame()
-        
-        # Convert images to numpy arrays
-        depth_image = np.asanyarray(depth_frame.get_data())
-        color_image = np.asanyarray(color_frame.get_data())
-
-        # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
-        depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
-
-        depth_colormap_dim = depth_colormap.shape
-        color_colormap_dim = color_image.shape
-        
-        return ret, frame
-
-    def release(self):
-        self.cap.release()
-        print("Closed Capturing Device")
-    
-    def isOpened(self):
-        return self.cap.isOpened()
-
+    # クラス間分散が最大のときの閾値を返す
+    return s_max[0]
 
 class MainProcess:
-    def __init__(self, model_path, *args):
+    def __init__(self, model_path, ucam,lcam,rs):
         # YOLOv8 modelのロード
         # self.model = YOLO(ncnn_model_path, task='detect')
         self.model = YOLO(model_path)
  
         # カメラ(webカメラ、Realsense)のクラスのタプル       
-        self.cameras = args
+        self.cameras = [ucam,lcam,rs]
         
-        # キューの宣言(self.q_frames_listの末尾は検出結果のフレーム、それ以外はカメラからのフレーム)
+        # キューの宣言([上部カメラ画像のキュー，下部カメラ画像のキュー，Realsense画像のキュー，処理した画像のキュー])
         self.q_frames_list = []
-        [self.q_frames_list.append(queue.Queue(maxsize=1)) for i in range(len(args) + 1)]
+        [self.q_frames_list.append(queue.Queue(maxsize=1)) for i in range(NUMBER_OF_CAMERAS+1)]
         
         # カメラ毎の処理数のリスト
-        self.counters = []
-        [self.counters.append(0) for i in range(len(args))]
+        self.counters = [0,0,0]
         
         # 処理の開始時間
         self.start_time = 0.0
@@ -291,14 +203,25 @@ class MainProcess:
             try:
                 ret, frame = cap.read()
                 if not ret:
-                    # frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3))
-                    continue
+                    frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
                 q_frames.put(frame)
             except KeyboardInterrupt:
                 break
           
-    # 画像処理をしてキューに入れる
-    def image_processing(self, id, q_frames, q_results):
+    # 画像(depthも)を取得してキューに入れる
+    def capturing_with_depth(self, q_frames, cap):
+        while True:
+            try:
+                ret, color, depth = cap.read()
+                if not ret:
+                    color = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
+                    depth = np.zeros((FRAME_HEIGHT, FRAME_WIDTH),dtype=np.uint8)
+                q_frames.put((color, depth))
+            except KeyboardInterrupt:
+                break
+          
+    # マスク処理によりボールをファンで吸い込めるかどうか判定してキューに入れる
+    def masking_for_fan_obtainable_judgement(self, id, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
@@ -360,17 +283,18 @@ class MainProcess:
                 self.counters[id] += 1
                 
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-                q_results.put((show_frame, id, items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
+                output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+                q_results.put((show_frame, id, output_data))
                 
             except KeyboardInterrupt:
                 break
     
-    # 推論してキューに入れる
-    def inference(self, id, q_frames, q_results):
+    # 推論によりボールをファンで吸い込めるかどうか判定してキューに入れる
+    def inference_for_fan_obtainable_judgement(self, id, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
-                results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=True)
+                results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=False)
                 annotated_frame = results[0].plot()
                 names = results[0].names
                 classes = results[0].boxes.cls
@@ -391,12 +315,68 @@ class MainProcess:
                             (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
                 is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
             
-            
                 # 処理数に加算
                 self.counters[id] += 1
-                
+            
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-                q_results.put((annotated_frame, id, len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable))
+                output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+                q_results.put((annotated_frame, id, output_data))
+                
+            except KeyboardInterrupt:
+                break
+            
+    # サイロの中の自分の籾の数を推論してキューに入れる
+    def inference_for_silo(self, id, q_frames, q_results):
+        while True:
+            try:
+                (color, depth) = q_frames.get()
+                results = self.model.predict(color, imgsz=320, conf=0.5, verbose=False)
+                annotated_frame = results[0].plot()
+                names = results[0].names
+                classes = results[0].boxes.cls
+                boxes = results[0].boxes
+                x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
+                my_ball_in_silo_counter = 0
+        
+                # ballのx1,y1,x2,y2,depthの平均を入れる
+                ball_xyz = np.empty((0,5), int)
+                
+                for box, cls in zip(boxes, classes):
+                    name = names[int(cls)]
+                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                    if(name == "blueball"):
+                        try:
+                            ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2,np.mean(depth[y1:y2,x1:x2][depth[y1:y2,x1:x2]>RS_MIN_DISTANCE])]],axis=0)
+                        except Exception as err:
+                            print(f"Unexpected {err=}, {type(err)=}")
+                
+                hist, _ = np.histogram(depth, BINS)
+                th = threshold_otsu(hist, 0, len(hist))
+                # 背景のdepthを0にする
+                depth[th*DISTANCE_INTERVAL<depth]=0
+                
+                for box, cls in zip(boxes, classes):
+                    name = names[int(cls)]
+                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                    if(name == "silo"):
+                        for bxyz in ball_xyz:
+                            if(x1<bxyz[0] and bxyz[2]<x2):
+                                # depth_imageからボールの領域を削除(min_distance以下の値にする)
+                                depth[int(bxyz[1]):int(bxyz[3]),int(bxyz[0]):int(bxyz[2])] = 0
+                                ball_z = int(bxyz[4])
+                                silo_z = np.mean(depth[y1:y2,x1:x2][depth[y1:y2,x1:x2]>RS_MIN_DISTANCE])
+                                #cv2.putText(annotated_image,f"ball_z:{ball_z}",(int(bxyz[0]),int(bxyz[1]-10)),cv2.FONT_HERSHEY_DUPLEX,1.0,(255,255,0))
+                                #cv2.putText(annotated_image,f"silo_z:{silo_z}",(int(x1),int(y1)-10),cv2.FONT_HERSHEY_DUPLEX,1.0,(255,255,0))
+                                if (abs(ball_z-silo_z)<BALL_IN_SILO_RANGE):
+                                    my_ball_in_silo_counter += 1
+                        cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
+                
+                # 処理数に加算
+                self.counters[id] += 1
+            
+                # 画像を送信
+                output_data = ()
+                q_results.put((annotated_frame, id, output_data))
                 
             except KeyboardInterrupt:
                 break
@@ -404,8 +384,19 @@ class MainProcess:
     # カメラからの画像取得と画像処理をスレッドごとに分けて実行      
     def thread_start(self):
         for id,cam in enumerate(self.cameras):
-            thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
-            thread_detecting = threading.Thread(target=self.image_processing, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            if type(cam) is UpperCamera:
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            elif type(cam) is LowerCamera:
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            elif type(cam) is RearCamera:
+                thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[id], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_silo, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            else:
+                print("Unexpected Camera Class")
+                quit()
+            
             thread_capturing.start()
             thread_detecting.start()
             
@@ -414,8 +405,19 @@ class MainProcess:
     # カメラからの画像取得と推論をスレッドごとに分けて実行
     def all_yolo_thread_start(self):
         for id,cam in enumerate(self.cameras):
-            thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
-            thread_detecting = threading.Thread(target=self.inference, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            if type(cam) is UpperCamera:
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            elif type(cam) is LowerCamera:
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            elif type(cam) is RearCamera:
+                thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[id], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_silo, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            else:
+                print("Unexpected Camera Class")
+                quit()
+            
             thread_capturing.start()
             thread_detecting.start()
             
@@ -424,9 +426,9 @@ class MainProcess:
     # キューを空にする
     def finish(self):
         end_time = time.time()
-        for i,c in enumerate(self.cameras):
+        for id,c in enumerate(self.cameras):
             c.release()
-            print(f"id{i} : {self.counters[i] / (end_time - self.start_time)} fps")
+            print(f"{id=} : {self.counters[id] / (end_time - self.start_time)} fps")
         
         for q in self.q_frames_list:
             while True:
@@ -435,4 +437,4 @@ class MainProcess:
                 except queue.Empty:
                     break
                 
-        print("queue empty")
+        print("All Queue Empty")
