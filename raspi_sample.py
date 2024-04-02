@@ -14,7 +14,7 @@ if __name__ == "__main__":
     mainprocess = MainProcess(model_path, cam0, cam1, rs)
     
     # マルチスレッドの実行
-    mainprocess.thread_start()
+    mainprocess.all_yolo_thread_start()
     
     start_time = time.time()
     while True:
