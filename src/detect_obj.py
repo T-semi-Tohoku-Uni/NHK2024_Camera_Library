@@ -4,9 +4,11 @@ from ultralytics import YOLO
 import threading
 import queue
 import time
+from enum import Enum
 from .camera import UpperCamera,LowerCamera,RearCamera
 
 NUMBER_OF_CAMERAS = 3
+
 # Camera Frame Width and Height[pxl]
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
@@ -16,6 +18,9 @@ DISTANCE_INTERVAL = 20
 
 # ball in silo 判定の許容範囲[mm]
 BALL_IN_SILO_RANGE = 150
+
+# ball in silo 判定の許容閾値[pxl]
+BALL_IN_SILO_THRESHOLD = 10
 
 # realsense d435iのdepth最大/最小距離[mm]
 RS_MAX_DISTANCE = 5000
@@ -49,6 +54,11 @@ theta_z = 0
 OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 80
+
+class THREAD_ID(Enum):
+    UPPER_THREAD_ID = 0
+    LOWER_THREAD_ID = 1
+    REAR_THREAD_ID = 2
 
 def calc_circularity(cnt :np.ndarray) -> float:
     '''
@@ -325,8 +335,52 @@ class MainProcess:
             except KeyboardInterrupt:
                 break
             
-    # サイロの中の自分の籾の数を推論してキューに入れる
+    # サイロの中の自分の籾の数を推論から求めてキューに入れる
     def inference_for_silo(self, id, q_frames, q_results):
+        while True:
+            try:
+                frame = q_frames.get()
+                results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=False)
+                annotated_frame = results[0].plot()
+                names = results[0].names
+                classes = results[0].boxes.cls
+                boxes = results[0].boxes
+                x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
+                my_ball_in_silo_counter = 0
+        
+                # ballのx1,y1,x2,y2を入れる
+                ball_xyz = np.empty((0,4), int)
+                
+                for box, cls in zip(boxes, classes):
+                    name = names[int(cls)]
+                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                    if(name == "blueball"):
+                        try:
+                            ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2]],axis=0)
+                        except Exception as err:
+                            print(f"Unexpected {err=}, {type(err)=}")
+                
+                for box, cls in zip(boxes, classes):
+                    name = names[int(cls)]
+                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                    if(name == "silo"):
+                        for bxyz in ball_xyz:
+                            if(x1<bxyz[0] and bxyz[2]<x2 and bxyz[3]<y2 and abs((x2-x1)-(bxyz[2]-bxyz[0]))<BALL_IN_SILO_THRESHOLD):
+                                my_ball_in_silo_counter += 1
+                        cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
+                
+                # 処理数に加算
+                self.counters[id] += 1
+            
+                # 画像を送信
+                output_data = ()
+                q_results.put((annotated_frame, id, output_data))
+                
+            except KeyboardInterrupt:
+                break
+
+    # サイロの中の自分の籾の数を推論とデプス情報から求めてキューに入れる
+    def inference_for_silo_with_depth(self, id, q_frames, q_results):
         while True:
             try:
                 (color, depth) = q_frames.get()
@@ -346,19 +400,23 @@ class MainProcess:
                     x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
                     if(name == "blueball"):
                         try:
-                            ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2,np.mean(depth[y1:y2,x1:x2][depth[y1:y2,x1:x2]>RS_MIN_DISTANCE])]],axis=0)
+                            # バウンディングボックスからボールの中心と半径を求め、その円内の深度の平均をappend
+                            cx = int((x1+x2)/2)
+                            cy = int((y1+y2)/2)
+                            r = max(abs(x1-x2), abs(y1-y2))
+                            ball_area = depth[y1:y2,x1:x2].copy()
+                            ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2,np.mean(ball_area[ball_area>RS_MIN_DISTANCE])]],axis=0)
                         except Exception as err:
                             print(f"Unexpected {err=}, {type(err)=}")
-                
-                hist, _ = np.histogram(depth, BINS)
-                th = threshold_otsu(hist, 0, len(hist))
-                # 背景のdepthを0にする
-                depth[th*DISTANCE_INTERVAL<depth]=0
                 
                 for box, cls in zip(boxes, classes):
                     name = names[int(cls)]
                     x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
                     if(name == "silo"):
+                        hist, _ = np.histogram(depth[y1:y2,x1:x2], BINS)
+                        th = threshold_otsu(hist, 0, len(hist))
+                        # 背景のdepthを0にする
+                        depth[y1:y2,x1:x2][th*DISTANCE_INTERVAL<depth[y1:y2,x1:x2]]=0
                         for bxyz in ball_xyz:
                             if(x1<bxyz[0] and bxyz[2]<x2):
                                 # depth_imageからボールの領域を削除(min_distance以下の値にする)
@@ -380,8 +438,10 @@ class MainProcess:
                 
             except KeyboardInterrupt:
                 break
+
     
-    # カメラからの画像取得と画像処理をスレッドごとに分けて実行      
+    
+    # カメラからの画像取得と画像処理、推論をスレッドごとに分けて実行      
     def thread_start(self):
         for id,cam in enumerate(self.cameras):
             if type(cam) is UpperCamera:
@@ -392,7 +452,7 @@ class MainProcess:
                 thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
             elif type(cam) is RearCamera:
                 thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_silo, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_silo_with_depth, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
             else:
                 print("Unexpected Camera Class")
                 quit()
@@ -413,7 +473,7 @@ class MainProcess:
                 thread_detecting = threading.Thread(target=self.inference_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
             elif type(cam) is RearCamera:
                 thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_silo, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_silo_with_depth, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
             else:
                 print("Unexpected Camera Class")
                 quit()
@@ -423,6 +483,28 @@ class MainProcess:
             
         self.start_time = time.time()
     
+    # カメラからの画像取得と画像処理、推論（デプス情報なし）をスレッドごとに分けて実行
+    def no_depth_thread_start(self):
+        for id,cam in enumerate(self.cameras):
+            if type(cam) is UpperCamera:
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            elif type(cam) is LowerCamera:
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            elif type(cam) is RearCamera:
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_silo, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+            else:
+                print("Unexpected Camera Class")
+                quit()
+            
+            thread_capturing.start()
+            thread_detecting.start()
+            
+        self.start_time = time.time()
+
+
     # キューを空にする
     def finish(self):
         end_time = time.time()
