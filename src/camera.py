@@ -144,7 +144,7 @@ class UpperCamera:
 
 class LowerCamera:
     def __init__(self):
-        device_id = usb_video_device(PORT_ID.USB3_UPPER.value)
+        device_id = usb_video_device(PORT_ID.USB2_LOWER.value)
         # Camera Settings
         self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
         # self.cap = cv2.VideoCapture(device_id)
