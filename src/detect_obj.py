@@ -56,9 +56,9 @@ OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 80
 
 class THREAD_ID(Enum):
-    UPPER_THREAD_ID = 0
-    LOWER_THREAD_ID = 1
-    REAR_THREAD_ID = 2
+    UPPER = 0
+    LOWER = 1
+    REAR = 2
 
 def calc_circularity(cnt :np.ndarray) -> float:
     '''
@@ -115,12 +115,14 @@ def calc_distance(r :float) -> float:
         dis = DETECTABLE_MAX_DIS
     return dis
 
-def coordinate_transformation(w, h, dis):
+def coordinate_transformation(thread_id, w, h, dis):
     """
     画像座標（ピクセル値）からロボット座標（mm）へ変換する:
     
     Parameters
     -----------
+    thread_id : THREAD_ID
+        スレッドのID
     w : int
         幅 [pxl]
     h : int
@@ -179,13 +181,13 @@ def threshold_otsu(hist, min_value=0, max_value=10):
     return s_max[0]
 
 class MainProcess:
-    def __init__(self, model_path, ucam,lcam,rs):
+    def __init__(self, model_path, ucam,lcam,rcam):
         # YOLOv8 modelのロード
         # self.model = YOLO(ncnn_model_path, task='detect')
         self.model = YOLO(model_path)
  
         # カメラ(webカメラ、Realsense)のクラスのタプル       
-        self.cameras = [ucam,lcam,rs]
+        self.cameras = [ucam,lcam,rcam]
         
         # キューの宣言([上部カメラ画像のキュー，下部カメラ画像のキュー，Realsense画像のキュー，処理した画像のキュー])
         self.q_frames_list = []
@@ -231,7 +233,7 @@ class MainProcess:
                 break
           
     # マスク処理によりボールをファンで吸い込めるかどうか判定してキューに入れる
-    def masking_for_fan_obtainable_judgement(self, id, q_frames, q_results):
+    def masking_for_fan_obtainable_judgement(self, thread_id, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
@@ -281,7 +283,7 @@ class MainProcess:
                         
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1]))
+                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(thread_id,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1]))
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                 
                 # 画像のタイプを揃える
@@ -290,17 +292,17 @@ class MainProcess:
                 show_frame = np.hstack((frame,hsv,mask))
                 
                 # 処理数に加算
-                self.counters[id] += 1
+                self.counters[thread_id.value] += 1
                 
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_results.put((show_frame, id, output_data))
+                q_results.put((show_frame, thread_id, output_data))
                 
             except KeyboardInterrupt:
                 break
     
     # 推論によりボールをファンで吸い込めるかどうか判定してキューに入れる
-    def inference_for_fan_obtainable_judgement(self, id, q_frames, q_results):
+    def inference_for_fan_obtainable_judgement(self, thread_id, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
@@ -322,21 +324,21 @@ class MainProcess:
                         z = calc_distance(r)
                         # 籾が複数ある場合は最も近いものの座標を返す
                         if z < paddy_rice_z:
-                            (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(int((x1+x2)/2), int((y1+y2)/2), z)
+                            (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(thread_id, int((x1+x2)/2), int((y1+y2)/2), z)
                 is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
             
                 # 処理数に加算
-                self.counters[id] += 1
+                self.counters[thread_id.value] += 1
             
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_results.put((annotated_frame, id, output_data))
+                q_results.put((annotated_frame, thread_id, output_data))
                 
             except KeyboardInterrupt:
                 break
             
     # サイロの中の自分の籾の数を推論から求めてキューに入れる
-    def inference_for_silo(self, id, q_frames, q_results):
+    def inference_for_silo(self, thread_id, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
@@ -370,17 +372,17 @@ class MainProcess:
                         cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
                 
                 # 処理数に加算
-                self.counters[id] += 1
+                self.counters[thread_id] += 1
             
                 # 画像を送信
                 output_data = ()
-                q_results.put((annotated_frame, id, output_data))
+                q_results.put((annotated_frame, thread_id, output_data))
                 
             except KeyboardInterrupt:
                 break
 
     # サイロの中の自分の籾の数を推論とデプス情報から求めてキューに入れる
-    def inference_for_silo_with_depth(self, id, q_frames, q_results):
+    def inference_for_silo_with_depth(self, thread_id, q_frames, q_results):
         while True:
             try:
                 (color, depth) = q_frames.get()
@@ -430,11 +432,11 @@ class MainProcess:
                         cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
                 
                 # 処理数に加算
-                self.counters[id] += 1
+                self.counters[thread_id.value] += 1
             
                 # 画像を送信
                 output_data = ()
-                q_results.put((annotated_frame, id, output_data))
+                q_results.put((annotated_frame, thread_id, output_data))
                 
             except KeyboardInterrupt:
                 break
@@ -443,16 +445,16 @@ class MainProcess:
     
     # カメラからの画像取得と画像処理、推論をスレッドごとに分けて実行      
     def thread_start(self):
-        for id,cam in enumerate(self.cameras):
+        for cam in self.cameras:
             if type(cam) is UpperCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.UPPER.value], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(THREAD_ID.UPPER, self.q_frames_list[THREAD_ID.UPPER.value], self.q_frames_list[-1]), daemon=True)
             elif type(cam) is LowerCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.LOWER.value], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(THREAD_ID.LOWER, self.q_frames_list[THREAD_ID.LOWER.value], self.q_frames_list[-1]), daemon=True)
             elif type(cam) is RearCamera:
-                thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_silo_with_depth, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[THREAD_ID.REAR.value], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_silo_with_depth, args=(THREAD_ID.REAR, self.q_frames_list[THREAD_ID.REAR.value], self.q_frames_list[-1]), daemon=True)
             else:
                 print("Unexpected Camera Class")
                 quit()
@@ -464,16 +466,16 @@ class MainProcess:
         
     # カメラからの画像取得と推論をスレッドごとに分けて実行
     def all_yolo_thread_start(self):
-        for id,cam in enumerate(self.cameras):
+        for cam in self.cameras:
             if type(cam) is UpperCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.UPPER.value], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_fan_obtainable_judgement, args=(THREAD_ID.UPPER, self.q_frames_list[THREAD_ID.UPPER.value], self.q_frames_list[-1]), daemon=True)
             elif type(cam) is LowerCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.LOWER.value], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_fan_obtainable_judgement, args=(THREAD_ID.LOWER, self.q_frames_list[THREAD_ID.LOWER.value], self.q_frames_list[-1]), daemon=True)
             elif type(cam) is RearCamera:
-                thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_silo_with_depth, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[THREAD_ID.REAR.value], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_silo_with_depth, args=(THREAD_ID.REAR, self.q_frames_list[THREAD_ID.REAR.value], self.q_frames_list[-1]), daemon=True)
             else:
                 print("Unexpected Camera Class")
                 quit()
@@ -485,16 +487,16 @@ class MainProcess:
     
     # カメラからの画像取得と画像処理、推論（デプス情報なし）をスレッドごとに分けて実行
     def no_depth_thread_start(self):
-        for id,cam in enumerate(self.cameras):
+        for cam in self.cameras:
             if type(cam) is UpperCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.UPPER.value], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(THREAD_ID.UPPER, self.q_frames_list[THREAD_ID.UPPER.value], self.q_frames_list[-1]), daemon=True)
             elif type(cam) is LowerCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.LOWER.value], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(THREAD_ID.LOWER, self.q_frames_list[THREAD_ID.LOWER.value], self.q_frames_list[-1]), daemon=True)
             elif type(cam) is RearCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[id], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_silo, args=(id, self.q_frames_list[id], self.q_frames_list[-1]), daemon=True)
+                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.REAR.value], cam), daemon=True)
+                thread_detecting = threading.Thread(target=self.inference_for_silo, args=(THREAD_ID.REAR, self.q_frames_list[THREAD_ID.REAR.value], self.q_frames_list[-1]), daemon=True)
             else:
                 print("Unexpected Camera Class")
                 quit()
@@ -508,9 +510,9 @@ class MainProcess:
     # キューを空にする
     def finish(self):
         end_time = time.time()
-        for id,c in enumerate(self.cameras):
+        for thread_id,c in enumerate(self.cameras):
             c.release()
-            print(f"{id=} : {self.counters[id] / (end_time - self.start_time)} fps")
+            print(f"{thread_id=} : {self.counters[thread_id] / (end_time - self.start_time)} fps")
         
         for q in self.q_frames_list:
             while True:

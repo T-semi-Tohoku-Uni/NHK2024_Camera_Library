@@ -1,18 +1,18 @@
 import numpy as np
 import cv2
-from src import UpperCamera, LowerCamera, RearCamera, MainProcess
+from src import UpperCamera, LowerCamera, RearCamera, MainProcess, THREAD_ID
 
 if __name__ == "__main__":
     #ncnn_model_path = 'models/20240109best_ncnn_model'
     model_path = 'models/20240109best.pt'
     
     # カメラのクラス
-    cam0 = UpperCamera(0)
-    cam1 = LowerCamera(2)
-    rs = RearCamera()
+    ucam = UpperCamera()
+    lcam = LowerCamera()
+    rcam = RearCamera()
     
     # メインプロセスを実行するクラス
-    mainprocess = MainProcess(model_path,cam0,cam1,rs)
+    mainprocess = MainProcess(model_path,ucam,lcam,rcam)
     
     # マルチスレッドの実行
     mainprocess.thread_start()
@@ -24,13 +24,13 @@ if __name__ == "__main__":
             cv2.imshow(f'frame{id}', frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
-            if id==0:   #UpperCamera
+            if id==THREAD_ID.UPPER:   #UpperCamera
                 items,x,y,z,is_obtainable = output_data
                 print(f"\n{id=}, {items=}, {x=}, {y=}, {z=}, {is_obtainable=}")
-            elif id==1:   #LowerCamera
+            elif id==THREAD_ID.LOWER:   #LowerCamera
                 items,x,y,z,is_obtainable = output_data
                 print(f"\n{id=}, {items=}, {x=}, {y=}, {z=}, {is_obtainable=}")
-            elif id==2:   #Realsense
+            elif id==THREAD_ID.REAR:   #RearCamera
                 print(f"\n{id=}")
             
             
