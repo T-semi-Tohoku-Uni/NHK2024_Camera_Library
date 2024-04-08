@@ -174,7 +174,8 @@ class LowerCamera:
             if not found_rgb:
                 print("The demo requires Depth camera with Color sensor")
                 exit(0)
-
+            # RealSenseのシリアル番号で指定
+            config.enable_device("242622071603")
             config.enable_stream(rs.stream.depth, 424, 240, rs.format.z16, FPS)
             config.enable_stream(rs.stream.color, FRAME_WIDTH, FRAME_HEIGHT, rs.format.bgr8, FPS)
             
@@ -236,7 +237,8 @@ class RearCamera:
             if not found_rgb:
                 print("The demo requires Depth camera with Color sensor")
                 exit(0)
-
+            # RealSenseのシリアル番号で指定
+            config.enable_device("944122072123")
             config.enable_stream(rs.stream.depth, 424, 240, rs.format.z16, FPS)
             config.enable_stream(rs.stream.color, FRAME_WIDTH, FRAME_HEIGHT, rs.format.bgr8, FPS)
             
