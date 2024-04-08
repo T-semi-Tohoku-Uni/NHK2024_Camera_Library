@@ -23,7 +23,43 @@ def usb_video_device(port : int):
         res = subprocess.check_output(cmd.split())
         by_path = res.decode()
         for line in by_path.split('\n'):
-            # wsl2だとusb-0:{port},raspiだとusb-0:1.{port}
+            """
+            wsl2だとusb-0:{port},raspiだとusb-0:1.{port}って思ったけど…
+            pi@tsemiR2:~/NHK2024/NHK2024_R2_Raspi $ ls -l /dev/v4l/by-path
+            total 0
+            lrwxrwxrwx 1 root root 13 Apr  7 20:28 platform-bcm2835-codec-video-index0 -> ../../video31
+            lrwxrwxrwx 1 root root 13 Apr  7 20:28 platform-bcm2835-isp-video-index0 -> ../../video13
+            lrwxrwxrwx 1 root root 13 Apr  7 20:28 platform-bcm2835-isp-video-index1 -> ../../video21
+            lrwxrwxrwx 1 root root 13 Apr  7 20:28 platform-bcm2835-isp-video-index2 -> ../../video22
+            lrwxrwxrwx 1 root root 13 Apr  7 20:28 platform-bcm2835-isp-video-index3 -> ../../video23
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1:1.0-video-index0 -> ../../video2
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1:1.0-video-index1 -> ../../video3
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1:1.0-video-index2 -> ../../video4
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1:1.0-video-index3 -> ../../video5
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1:1.3-video-index0 -> ../../video6
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1:1.3-video-index1 -> ../../video7
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.4:1.2-video-index0 -> ../../video0
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:1.4:1.2-video-index1 -> ../../video1
+            lrwxrwxrwx 1 root root 12 Apr  8 20:59 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:2:1.0-video-index0 -> ../../video8
+            lrwxrwxrwx 1 root root 12 Apr  8 20:59 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:2:1.0-video-index1 -> ../../video9
+            lrwxrwxrwx 1 root root 13 Apr  8 20:59 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:2:1.0-video-index2 -> ../../video17
+            lrwxrwxrwx 1 root root 13 Apr  8 20:59 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:2:1.0-video-index3 -> ../../video24
+            lrwxrwxrwx 1 root root 13 Apr  8 20:59 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:2:1.3-video-index0 -> ../../video25
+            lrwxrwxrwx 1 root root 13 Apr  8 20:59 platform-fd500000.pcie-pci-0000:01:00.0-usb-0:2:1.3-video-index1 -> ../../video26
+            lrwxrwxrwx 1 root root 13 Apr  7 20:28 platform-feb10000.codec-video-index0 -> ../../video19
+            pi@tsemiR2:~/NHK2024/NHK2024_R2_Raspi $ ls -l /dev/v4l/by-id
+            total 0
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 usb-046d_HD_Webcam_C615_2758A560-video-index0 -> ../../video0
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 usb-046d_HD_Webcam_C615_2758A560-video-index1 -> ../../video1
+            lrwxrwxrwx 1 root root 13 Apr  8 20:59 usb-Intel_R__RealSense_TM__Depth_Camera_435i_Intel_R__RealSense_TM__Depth_Camera_435i_244523062174-video-index0 -> ../../video25
+            lrwxrwxrwx 1 root root 12 Apr  8 20:59 usb-Intel_R__RealSense_TM__Depth_Camera_435i_Intel_R__RealSense_TM__Depth_Camera_435i_244523062174-video-index1 -> ../../video9
+            lrwxrwxrwx 1 root root 13 Apr  8 20:59 usb-Intel_R__RealSense_TM__Depth_Camera_435i_Intel_R__RealSense_TM__Depth_Camera_435i_244523062174-video-index2 -> ../../video17
+            lrwxrwxrwx 1 root root 13 Apr  8 20:59 usb-Intel_R__RealSense_TM__Depth_Camera_435i_Intel_R__RealSense_TM__Depth_Camera_435i_244523062174-video-index3 -> ../../video24
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 usb-Intel_R__RealSense_TM__Depth_Camera_435i_Intel_R__RealSense_TM__Depth_Camera_435i_926623051695-video-index0 -> ../../video6
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 usb-Intel_R__RealSense_TM__Depth_Camera_435i_Intel_R__RealSense_TM__Depth_Camera_435i_926623051695-video-index1 -> ../../video7
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 usb-Intel_R__RealSense_TM__Depth_Camera_435i_Intel_R__RealSense_TM__Depth_Camera_435i_926623051695-video-index2 -> ../../video4
+            lrwxrwxrwx 1 root root 12 Apr  8 20:55 usb-Intel_R__RealSense_TM__Depth_Camera_435i_Intel_R__RealSense_TM__Depth_Camera_435i_926623051695-video-index3 -> ../../video5
+            """
             if(f'usb-0:1.{port}' in line):
                 tmp = line.split('index')[1][0]
                 if int(tmp) % 2 == 0:
