@@ -213,7 +213,7 @@ class MainProcess:
     def capturing(self, q_frames, cap):
         while True:
             try:
-                ret, frame = cap.read()
+                ret, frame, _ = cap.read()
                 if not ret:
                     frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
                 q_frames.put(frame)
@@ -372,7 +372,7 @@ class MainProcess:
                         cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
                 
                 # 処理数に加算
-                self.counters[thread_id] += 1
+                self.counters[thread_id.value] += 1
             
                 # 画像を送信
                 output_data = ()
