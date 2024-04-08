@@ -11,15 +11,15 @@ import cv2
 import datetime
 
 # Configure depth and color streams
-pipeline = rs.pipeline()
-config = rs.config()
+pipeline1 = rs.pipeline()
+config1 = rs.config()
 
 # Get device product line for setting a supporting resolution
-pipeline_wrapper = rs.pipeline_wrapper(pipeline)
-print(f"{pipeline_wrapper=}")
-pipeline_profile = config.resolve(pipeline_wrapper)
+pipeline_wrapper = rs.pipeline_wrapper(pipeline1)
+pipeline_profile = config1.resolve(pipeline_wrapper)
 device = pipeline_profile.get_device()
 device_product_line = str(device.get_info(rs.camera_info.product_line))
+serial_number = str(device.get_info(rs.camera_info.serial_number))
 
 found_rgb = False
 for s in device.sensors:
@@ -30,25 +30,27 @@ if not found_rgb:
     print("The demo requires Depth camera with Color sensor")
     exit(0)
 
-config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+print(f"{serial_number=}")
+
+config1.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
 
 if device_product_line == 'L500':
-    config.enable_stream(rs.stream.color, 960, 540, rs.format.bgr8, 30)
+    config1.enable_stream(rs.stream.color, 960, 540, rs.format.bgr8, 30)
 else:
-    config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+    config1.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
 
 # 動画保存
 # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f")[:-3]
 # config.enable_record_to_file(f'../../../{timestamp}.bag')
 
 # Start streaming
-pipeline.start(config)
+pipeline1.start(config1)
 
 try:
     while True:
 
         # Wait for a coherent pair of frames: depth and color
-        frames = pipeline.wait_for_frames()
+        frames = pipeline1.wait_for_frames()
         depth_frame = frames.get_depth_frame()
         color_frame = frames.get_color_frame()
         if not depth_frame or not color_frame:
@@ -80,4 +82,4 @@ try:
 finally:
 
     # Stop streaming
-    pipeline.stop()
+    pipeline1.stop()
