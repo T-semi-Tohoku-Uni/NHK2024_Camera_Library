@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-from src import UpperCamera, LowerCamera, RearCamera, MainProcess, THREAD_ID
+from src import UpperCamera, LowerCamera, RearCamera, MainProcess, QUEUE_ID
 
 if __name__ == "__main__":
     #ncnn_model_path = 'models/20240109best_ncnn_model'

@@ -7,8 +7,6 @@ import time
 from enum import Enum
 from .camera import UpperCamera,LowerCamera,RearCamera
 
-NUMBER_OF_CAMERAS = 3
-
 # Camera Frame Width and Height[pxl]
 FRAME_WIDTH = 320
 FRAME_HEIGHT = 240
@@ -26,6 +24,7 @@ BALL_IN_SILO_THRESHOLD = 10
 RS_MAX_DISTANCE = 5000
 RS_MIN_DISTANCE = 100
 
+# 大津の二値化を適用するデプスの間隔を表す配列
 BINS=[i for i in range(RS_MIN_DISTANCE,RS_MAX_DISTANCE+RS_MIN_DISTANCE,DISTANCE_INTERVAL)]
 
 # 籾の半径[mm]
@@ -40,25 +39,17 @@ MIN_CONTOUR_AREA_THRESHOLD = 2000
 # 円形度の閾値
 CIRCULARITY_THRESHOLD=0.5
 
-# ロボットの中心位置を原点とした時のカメラの位置[mm]
-CAMERA_POS_X = 100
-CAMERA_POS_Y = 400
-CAMERA_POS_Z = 150
-
-# カメラ座標におけるカメラの傾き[rad]
-theta_x = 30*np.pi/180
-theta_y = 0
-theta_z = 0
-
 # ロボット座標におけるアームのファンで吸い込めるエリアの中心と半径[mm]
 OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 80
 
-class THREAD_ID(Enum):
-    UPPER = 0
-    LOWER = 1
-    REAR = 2
+class QUEUE_ID(Enum):
+    UPPER_IN = 0
+    LOWER_IN = 1
+    REAR_IN = 2
+    FRONT_OUT = 3
+    REAR_OUT = 4
 
 def calc_circularity(cnt :np.ndarray) -> float:
     '''
@@ -115,14 +106,14 @@ def calc_distance(r :float) -> float:
         dis = DETECTABLE_MAX_DIS
     return dis
 
-def coordinate_transformation(thread_id, w, h, dis):
+def coordinate_transformation(params,w, h, dis):
     """
     画像座標（ピクセル値）からロボット座標（mm）へ変換する:
     
     Parameters
     -----------
-    thread_id : THREAD_ID
-        スレッドのID
+    param : tuple
+        カメラの姿勢パラメータ
     w : int
         幅 [pxl]
     h : int
@@ -140,12 +131,12 @@ def coordinate_transformation(thread_id, w, h, dis):
         垂直方向 [mm]
     
     """
+    (pos_x,pos_y,pos_z,theta_x,theta_y,theta_z) = params
     internal_param_inv = np.array([[0.0037037, 0, 0], [0, 0.0037037, 0], [0, 0, 1] ,[0, 0, 1/dis]])
-    external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), CAMERA_POS_X],
-                      [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), CAMERA_POS_Y],
-                      [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), CAMERA_POS_Z],
-                      [0, 0, 0, 1]])
-    
+    external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), pos_x],
+                        [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), pos_y],
+                        [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), pos_z],
+                        [0, 0, 0, 1]])
     # Opencvの座標でいう(FRAME_WIDTH/2, FRAME_HEIGHT/2)が(0,0)になるよう平行移動
     Target = np.array([[(w-FRAME_WIDTH/2)*dis], [(-h+FRAME_HEIGHT/2)*dis], [dis]])
     
@@ -180,21 +171,50 @@ def threshold_otsu(hist, min_value=0, max_value=10):
     # クラス間分散が最大のときの閾値を返す
     return s_max[0]
 
+def find_circle_contours(mask_img):
+    """
+    マスク画像から円の輪郭を探す
+    
+    Parameters
+    ----------
+    mask_img : numpy.array
+        マスク処理をした画像
+    
+    Returns
+    -------
+    circles : list
+        円の輪郭情報のリスト
+    """
+    contours = []
+    circles = []
+    contours, hierarchy = cv2.findContours(mask_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if len(contours) > 0:
+        # 小さい輪郭は誤検出として削除
+        contours = list(filter(lambda x: cv2.contourArea(x) > MIN_CONTOUR_AREA_THRESHOLD, contours))
+        
+        # 最小外接円を求める
+        circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>CIRCULARITY_THRESHOLD]
+    return circles
+
 class MainProcess:
-    def __init__(self, model_path, ucam,lcam,rcam):
+    def __init__(self, model_path, ucam, lcam, rcam):
         # YOLOv8 modelのロード
         # self.model = YOLO(ncnn_model_path, task='detect')
         self.model = YOLO(model_path)
  
-        # カメラ(webカメラ、Realsense)のクラスのタプル       
-        self.cameras = [ucam,lcam,rcam]
+        # キューの辞書の宣言(上部カメラ画像のキュー，下部カメラ画像のキュー，Realsense画像のキュー，ロボット前の処理した画像のキュー，ロボット後ろの処理した画像のキュー)
+        self.q_upper_in = queue.Queue(maxsize=1)
+        self.q_lower_in = queue.Queue(maxsize=1)
+        self.q_rear_in = queue.Queue(maxsize=1)
+        self.q_front_out = queue.Queue(maxsize=1)
+        self.q_rear_out = queue.Queue(maxsize=1)
         
-        # キューの宣言([上部カメラ画像のキュー，下部カメラ画像のキュー，Realsense画像のキュー，処理した画像のキュー])
-        self.q_frames_list = []
-        [self.q_frames_list.append(queue.Queue(maxsize=1)) for i in range(NUMBER_OF_CAMERAS+1)]
-        
-        # カメラ毎の処理数のリスト
-        self.counters = [0,0,0]
+        self.ucam = ucam
+        self.lcam = lcam
+        self.rcam = rcam
+
+        # カメラ毎の処理数のdictionary
+        self.counters = {QUEUE_ID.FRONT_OUT:0, QUEUE_ID.REAR_OUT:0}
         
         # 処理の開始時間
         self.start_time = 0.0
@@ -233,112 +253,135 @@ class MainProcess:
                 break
           
     # マスク処理によりボールをファンで吸い込めるかどうか判定してキューに入れる
-    def masking_for_fan_obtainable_judgement(self, thread_id, q_frames, q_results):
+    def masking_for_fan_obtainable_judgement(self, ucam_params, lcam_params, q_ucam, q_lcam, q_results):
         while True:
             try:
-                frame = q_frames.get()
+                ucam_frame = q_ucam.get()
+                lcam_frame = q_lcam.get()
 
                 # 出力画像にガウシアンフィルタを適用する。
-                frame = cv2.GaussianBlur(frame, ksize=(7,7),sigmaX=0)
+                ucam_frame = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
+                lcam_frame = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
+
 
                 # カメラ画像をHSVに変換
-                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV_FULL)
+                ucam_hsv = cv2.cvtColor(ucam_frame, cv2.COLOR_BGR2HSV_FULL)
+                lcam_hsv = cv2.cvtColor(lcam_frame, cv2.COLOR_BGR2HSV_FULL)
 
-                # hsvの輝度成分を抽出
-                # vimg = hsv[:,:,2]
-
-                # 輝度画像に対し適応的閾値処理で二値化
-                # vimg = cv2.adaptiveThreshold(vimg,255,cv2.ADAPTIVE_THRESH_GAUSSIAN_C,cv2.THRESH_BINARY,9,3)
-
-                # モルフォロジー変換でクロージング処理
-                # vimg = cv2.morphologyEx(vimg, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
-
-                # hsvの輝度成分をvimgに変更
-                # hsv[:,:,2] = vimg
-
-                # HSV画像から指定したHSVの値でマスクを作成する
-                # mask = cv2.inRange(hsv, np.array([0,50,50]), np.array([255,255,255]))
-                mask = cv2.inRange(hsv,self.blue_lower_mask,self.blue_upper_mask)
-
+                # 閾値でmasking処理
+                ucam_mask = cv2.inRange(ucam_hsv,self.blue_lower_mask,self.blue_upper_mask)
+                lcam_mask = cv2.inRange(lcam_hsv,self.blue_lower_mask,self.blue_upper_mask)
+                
                 items = 0
                 paddy_rice_x = 0
                 paddy_rice_y = 0
                 paddy_rice_z = DETECTABLE_MAX_DIS
                 is_obtainable = False
-                contours = []
-                circles = []
-
-                # 輪郭検出
-                contours, hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if len(contours) > 0:
-                    # 小さい輪郭は誤検出として削除
-                    contours = list(filter(lambda x: cv2.contourArea(x) > MIN_CONTOUR_AREA_THRESHOLD, contours))
-                    
-                    # 最小外接円を求める
-                    circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>CIRCULARITY_THRESHOLD]
+                
+                # 下部カメラで円を検出する
+                circles = find_circle_contours(lcam_mask)
+                # もし下部カメラで円が検出されたら
+                if len(circles) > 0:
+                    # デバッグ用に円を描画
+                    [cv2.circle(lcam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
+                    items = len(circles)
+                    target = circles.index(max(circles, key=lambda x:x[1]))
+                    (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(lcam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1]))
+                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+                # もし下部カメラで円が検出されなければ
+                else:
+                    # 上部カメラで円を検出する
+                    circles = find_circle_contours(ucam_mask)
+                    # もし上部カメラで円が検出されたら
                     if len(circles) > 0:
-
                         # デバッグ用に円を描画
-                        [cv2.circle(frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
-                        
+                        [cv2.circle(ucam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(thread_id,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1]))
+                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1]))
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-                
+
+
                 # 画像のタイプを揃える
-                hsv = cv2.cvtColor(hsv,cv2.COLOR_HSV2BGR_FULL)
-                mask = cv2.cvtColor(mask,cv2.COLOR_GRAY2BGR)
-                show_frame = np.hstack((frame,hsv,mask))
+                ucam_mask = cv2.cvtColor(ucam_mask,cv2.COLOR_GRAY2BGR)
+                lcam_mask = cv2.cvtColor(lcam_mask,cv2.COLOR_GRAY2BGR)
+                show_frame = np.hstack((ucam_frame,ucam_mask,lcam_frame,lcam_mask))
                 
                 # 処理数に加算
-                self.counters[thread_id.value] += 1
+                self.counters[QUEUE_ID.FRONT_OUT] += 1
                 
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_results.put((show_frame, thread_id, output_data))
+                q_results.put((show_frame, QUEUE_ID.FRONT_OUT, output_data))
                 
             except KeyboardInterrupt:
                 break
     
     # 推論によりボールをファンで吸い込めるかどうか判定してキューに入れる
-    def inference_for_fan_obtainable_judgement(self, thread_id, q_frames, q_results):
+    def inference_for_fan_obtainable_judgement(self, ucam_params, lcam_params, q_ucam, q_lcam, q_results):
         while True:
             try:
-                frame = q_frames.get()
-                results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=False)
-                annotated_frame = results[0].plot()
-                names = results[0].names
-                classes = results[0].boxes.cls
-                boxes = results[0].boxes
-                
+                # 初期化
                 paddy_rice_x = 0
                 paddy_rice_y = 0
                 paddy_rice_z = DETECTABLE_MAX_DIS
-                for box, cls in zip(boxes, classes):
-                    name = names[int(cls)]
-                    if(name == "blueball"):
-                        x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                        # 長方形の長辺を籾の半径とする
-                        r = max(abs(x1-x2)/2, abs(y1-y2)/2)
-                        z = calc_distance(r)
-                        # 籾が複数ある場合は最も近いものの座標を返す
-                        if z < paddy_rice_z:
-                            (paddy_rice_x, paddy_rice_y, paddy_rice_z) = coordinate_transformation(thread_id, int((x1+x2)/2), int((y1+y2)/2), z)
-                is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-            
+
+                # 下部カメラから推論
+                lcam_frame = q_lcam.get()
+                lcam_results = self.model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False)
+                lcam_annotated_frame = lcam_results[0].plot()
+                names = lcam_results[0].names
+                classes = lcam_results[0].boxes.cls
+                boxes = lcam_results[0].boxes
+                # 上部カメラから推論
+                ucam_frame = q_ucam.get()
+                ucam_results = self.model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False)
+                ucam_annotated_frame = ucam_results[0].plot()
+                
+                # もし、下部カメラで検出できていれば
+                if boxes.dim() > 0:
+                    for box, cls in zip(boxes, classes):
+                        name = names[int(cls)]
+                        if(name == "blueball"):
+                            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                            # 長方形の長辺を籾の半径とする
+                            r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+                            z = calc_distance(r)
+                            # 籾が複数ある場合は最も近いものの座標を返す
+                            if z < paddy_rice_z:
+                                (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(lcam_params,int((x1+x2)/2),int((y1+y2)/2),z)
+                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+                # そうでなければ
+                else:
+                    names = ucam_results[0].names
+                    classes = ucam_results[0].boxes.cls
+                    boxes = ucam_results[0].boxes
+                    for box, cls in zip(boxes, classes):
+                        name = names[int(cls)]
+                        if(name == "blueball"):
+                            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                            # 長方形の長辺を籾の半径とする
+                            r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+                            z = calc_distance(r)
+                            # 籾が複数ある場合は最も近いものの座標を返す
+                            if z < paddy_rice_z:
+                                (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int((x1+x2)/2),int((y1+y2)/2),z)
+                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+
+
                 # 処理数に加算
-                self.counters[thread_id.value] += 1
-            
+                self.counters[QUEUE_ID.FRONT_OUT] += 1
+
+                show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_results.put((annotated_frame, thread_id, output_data))
+                q_results.put((show_frame, QUEUE_ID.FRONT_OUT, output_data))
                 
             except KeyboardInterrupt:
                 break
             
     # サイロの中の自分の籾の数を推論から求めてキューに入れる
-    def inference_for_silo(self, thread_id, q_frames, q_results):
+    def inference_for_silo(self, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
@@ -372,17 +415,17 @@ class MainProcess:
                         cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
                 
                 # 処理数に加算
-                self.counters[thread_id.value] += 1
+                self.counters[QUEUE_ID.REAR_OUT] += 1
             
                 # 画像を送信
                 output_data = ()
-                q_results.put((annotated_frame, thread_id, output_data))
+                q_results.put((annotated_frame, QUEUE_ID.REAR_OUT, output_data))
                 
             except KeyboardInterrupt:
                 break
 
     # サイロの中の自分の籾の数を推論とデプス情報から求めてキューに入れる
-    def inference_for_silo_with_depth(self, thread_id, q_frames, q_results):
+    def inference_for_silo_with_depth(self, q_frames, q_results):
         while True:
             try:
                 (color, depth) = q_frames.get()
@@ -402,10 +445,6 @@ class MainProcess:
                     x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
                     if(name == "blueball"):
                         try:
-                            # バウンディングボックスからボールの中心と半径を求め、その円内の深度の平均をappend
-                            cx = int((x1+x2)/2)
-                            cy = int((y1+y2)/2)
-                            r = max(abs(x1-x2), abs(y1-y2))
                             ball_area = depth[y1:y2,x1:x2].copy()
                             ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2,np.mean(ball_area[ball_area>RS_MIN_DISTANCE])]],axis=0)
                         except Exception as err:
@@ -432,87 +471,36 @@ class MainProcess:
                         cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
                 
                 # 処理数に加算
-                self.counters[thread_id.value] += 1
+                self.counters[QUEUE_ID.REAR_OUT] += 1
             
                 # 画像を送信
                 output_data = ()
-                q_results.put((annotated_frame, thread_id, output_data))
+                q_results.put((annotated_frame, QUEUE_ID.REAR_OUT, output_data))
                 
             except KeyboardInterrupt:
                 break
 
-    
-    
-    # カメラからの画像取得と画像処理、推論をスレッドごとに分けて実行      
+    # カメラからの画像取得と画像処理、推論(デプス無し)をスレッドごとに分けて実行      
     def thread_start(self):
-        for cam in self.cameras:
-            if type(cam) is UpperCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.UPPER.value], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(THREAD_ID.UPPER, self.q_frames_list[THREAD_ID.UPPER.value], self.q_frames_list[-1]), daemon=True)
-            elif type(cam) is LowerCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.LOWER.value], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(THREAD_ID.LOWER, self.q_frames_list[THREAD_ID.LOWER.value], self.q_frames_list[-1]), daemon=True)
-            elif type(cam) is RearCamera:
-                thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[THREAD_ID.REAR.value], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_silo_with_depth, args=(THREAD_ID.REAR, self.q_frames_list[THREAD_ID.REAR.value], self.q_frames_list[-1]), daemon=True)
-            else:
-                print("Unexpected Camera Class")
-                quit()
-            
-            thread_capturing.start()
-            thread_detecting.start()
-            
-        self.start_time = time.time()
+        thread_upper_capturing = threading.Thread(target=self.capturing, args=(self.q_upper_in,self.ucam), daemon=True)
+        thread_lower_capturing = threading.Thread(target=self.capturing, args=(self.q_lower_in,self.lcam), daemon=True)
+        thread_front_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(self.ucam.params,self.lcam.params,self.q_upper_in,self.q_lower_in,self.q_front_out),daemon=True)
+        thread_rear_capturing = threading.Thread(target=self.capturing, args=(self.q_rear_in,self.rcam),daemon=True)
+        thread_rear_detecting = threading.Thread(target=self.inference_for_silo, args=(self.q_rear_in,self.q_rear_out),daemon=True)
         
-    # カメラからの画像取得と推論をスレッドごとに分けて実行
-    def all_yolo_thread_start(self):
-        for cam in self.cameras:
-            if type(cam) is UpperCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.UPPER.value], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_fan_obtainable_judgement, args=(THREAD_ID.UPPER, self.q_frames_list[THREAD_ID.UPPER.value], self.q_frames_list[-1]), daemon=True)
-            elif type(cam) is LowerCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.LOWER.value], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_fan_obtainable_judgement, args=(THREAD_ID.LOWER, self.q_frames_list[THREAD_ID.LOWER.value], self.q_frames_list[-1]), daemon=True)
-            elif type(cam) is RearCamera:
-                thread_capturing = threading.Thread(target=self.capturing_with_depth, args=(self.q_frames_list[THREAD_ID.REAR.value], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_silo_with_depth, args=(THREAD_ID.REAR, self.q_frames_list[THREAD_ID.REAR.value], self.q_frames_list[-1]), daemon=True)
-            else:
-                print("Unexpected Camera Class")
-                quit()
-            
-            thread_capturing.start()
-            thread_detecting.start()
-            
+        thread_upper_capturing.start()
+        thread_lower_capturing.start()
+        thread_front_detecting.start()
+        thread_rear_capturing.start()
+        thread_rear_detecting.start()
         self.start_time = time.time()
-    
-    # カメラからの画像取得と画像処理、推論（デプス情報なし）をスレッドごとに分けて実行
-    def no_depth_thread_start(self):
-        for cam in self.cameras:
-            if type(cam) is UpperCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.UPPER.value], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(THREAD_ID.UPPER, self.q_frames_list[THREAD_ID.UPPER.value], self.q_frames_list[-1]), daemon=True)
-            elif type(cam) is LowerCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.LOWER.value], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(THREAD_ID.LOWER, self.q_frames_list[THREAD_ID.LOWER.value], self.q_frames_list[-1]), daemon=True)
-            elif type(cam) is RearCamera:
-                thread_capturing = threading.Thread(target=self.capturing, args=(self.q_frames_list[THREAD_ID.REAR.value], cam), daemon=True)
-                thread_detecting = threading.Thread(target=self.inference_for_silo, args=(THREAD_ID.REAR, self.q_frames_list[THREAD_ID.REAR.value], self.q_frames_list[-1]), daemon=True)
-            else:
-                print("Unexpected Camera Class")
-                quit()
-            
-            thread_capturing.start()
-            thread_detecting.start()
-            
-        self.start_time = time.time()
-
 
     # キューを空にする
     def finish(self):
         end_time = time.time()
-        for thread_id,c in enumerate(self.cameras):
-            c.release()
-            print(f"{thread_id=} : {self.counters[thread_id] / (end_time - self.start_time)} fps")
+        for cam in (self.ucam,self.lcam,self.rcam):
+            self.cameras_dict[thread_id].release()
+            print(f"{thread_id=} : {self.counters[thread_id.value] / (end_time - self.start_time)} fps")
         
         for q in self.q_frames_list:
             while True:
