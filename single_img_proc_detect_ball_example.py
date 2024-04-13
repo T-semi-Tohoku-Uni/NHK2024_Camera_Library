@@ -1,5 +1,5 @@
 import cv2
-from src import FrontCamera, MainProcess
+from src import MainProcess,LowerCamera,OUTPUT_ID
 import time
 
 if __name__ == "__main__":
@@ -7,7 +7,7 @@ if __name__ == "__main__":
     model_path = 'models/20240109best.pt'
     
     # カメラのクラス
-    cam = FrontCamera(0)
+    cam = LowerCamera()
     
     # メインプロセスを実行するクラス
     mainprocess = MainProcess(model_path)
@@ -16,20 +16,23 @@ if __name__ == "__main__":
     count = 0
     
     # マルチスレッドの実行
-    mainprocess.thread_start(cam)
+    mainprocess.thread_start()
     
     start_time = time.time()
     while True:
         try:
-            frame, items, x, y, z, is_obtainable = mainprocess.q_results.get()
-            #_, items, x, y, z, is_obtainable = (1,1,1,1,True)
-            print(f"\nitems:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
-            count += 1
+            frame, id, data = mainprocess.q_out.get()
             
-            cv2.drawMarker(frame, (160,128), (0,0,255))
-            cv2.imshow('frame', frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
+            #_, items, x, y, z, is_obtainable = (1,1,1,1,True)
+            if id == OUTPUT_ID.BALL:
+                items, x, y, z, is_obtainable = data
+                print(f"\nitems:{items}, x:{x}, y:{y}, z:{z}, is_obtainable:{is_obtainable}")
+                count += 1
+            
+                cv2.drawMarker(frame, (160,128), (0,0,255))
+                cv2.imshow('frame', frame)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
             
         except KeyboardInterrupt:
             break

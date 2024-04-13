@@ -3,9 +3,6 @@ import cv2
 from ultralytics import YOLO
 import threading
 import queue
-import time
-from enum import Enum
-from .camera import UpperCamera,LowerCamera,RearCamera
 
 # Camera Frame Width and Height[pxl]
 FRAME_WIDTH = 320
@@ -44,12 +41,6 @@ OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 80
 
-class QUEUE_ID(Enum):
-    UPPER_IN = 0
-    LOWER_IN = 1
-    REAR_IN = 2
-    FRONT_OUT = 3
-    REAR_OUT = 4
 
 def calc_circularity(cnt :np.ndarray) -> float:
     '''
@@ -131,8 +122,8 @@ def coordinate_transformation(params,w, h, dis):
         垂直方向 [mm]
     
     """
-    (pos_x,pos_y,pos_z,theta_x,theta_y,theta_z) = params
-    internal_param_inv = np.array([[0.0037037, 0, 0], [0, 0.0037037, 0], [0, 0, 1] ,[0, 0, 1/dis]])
+    (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z) = params
+    internal_param_inv = np.array([[focal_length_inv, 0, 0], [0,focal_length_inv, 0], [0, 0, 1] ,[0, 0, 1/dis]])
     external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), pos_x],
                         [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), pos_y],
                         [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), pos_z],
@@ -196,28 +187,11 @@ def find_circle_contours(mask_img):
         circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>CIRCULARITY_THRESHOLD]
     return circles
 
-class MainProcess:
-    def __init__(self, model_path, ucam, lcam, rcam):
+class DetectObj:
+    def __init__(self,model_path):
         # YOLOv8 modelのロード
         # self.model = YOLO(ncnn_model_path, task='detect')
         self.model = YOLO(model_path)
- 
-        # キューの辞書の宣言(上部カメラ画像のキュー，下部カメラ画像のキュー，Realsense画像のキュー，ロボット前の処理した画像のキュー，ロボット後ろの処理した画像のキュー)
-        self.q_upper_in = queue.Queue(maxsize=1)
-        self.q_lower_in = queue.Queue(maxsize=1)
-        self.q_rear_in = queue.Queue(maxsize=1)
-        self.q_front_out = queue.Queue(maxsize=1)
-        self.q_rear_out = queue.Queue(maxsize=1)
-        
-        self.ucam = ucam
-        self.lcam = lcam
-        self.rcam = rcam
-
-        # カメラ毎の処理数のdictionary
-        self.counters = {QUEUE_ID.FRONT_OUT:0, QUEUE_ID.REAR_OUT:0}
-        
-        # 処理の開始時間
-        self.start_time = 0.0
         
         # maskの値を設定する
         self.blue_lower_mask = np.array([135, 50, 50])
@@ -253,7 +227,7 @@ class MainProcess:
                 break
           
     # マスク処理によりボールをファンで吸い込めるかどうか判定してキューに入れる
-    def masking_for_fan_obtainable_judgement(self, ucam_params, lcam_params, q_ucam, q_lcam, q_results):
+    def masking_for_fan_obtainable_judgement(self, output_id, ucam_params, lcam_params, q_ucam, q_lcam, q_results):
         while True:
             try:
                 ucam_frame = q_ucam.get()
@@ -262,7 +236,6 @@ class MainProcess:
                 # 出力画像にガウシアンフィルタを適用する。
                 ucam_frame = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
                 lcam_frame = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
-
 
                 # カメラ画像をHSVに変換
                 ucam_hsv = cv2.cvtColor(ucam_frame, cv2.COLOR_BGR2HSV_FULL)
@@ -307,18 +280,15 @@ class MainProcess:
                 lcam_mask = cv2.cvtColor(lcam_mask,cv2.COLOR_GRAY2BGR)
                 show_frame = np.hstack((ucam_frame,ucam_mask,lcam_frame,lcam_mask))
                 
-                # 処理数に加算
-                self.counters[QUEUE_ID.FRONT_OUT] += 1
-                
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_results.put((show_frame, QUEUE_ID.FRONT_OUT, output_data))
+                q_results.put((show_frame, output_id, output_data))
                 
             except KeyboardInterrupt:
                 break
     
     # 推論によりボールをファンで吸い込めるかどうか判定してキューに入れる
-    def inference_for_fan_obtainable_judgement(self, ucam_params, lcam_params, q_ucam, q_lcam, q_results):
+    def inference_for_fan_obtainable_judgement(self,output_id, ucam_params, lcam_params, q_ucam, q_lcam, q_results):
         while True:
             try:
                 # 初期化
@@ -368,20 +338,16 @@ class MainProcess:
                                 (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int((x1+x2)/2),int((y1+y2)/2),z)
                     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
 
-
-                # 処理数に加算
-                self.counters[QUEUE_ID.FRONT_OUT] += 1
-
                 show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_results.put((show_frame, QUEUE_ID.FRONT_OUT, output_data))
+                q_results.put((show_frame, output_id, output_data))
                 
             except KeyboardInterrupt:
                 break
             
     # サイロの中の自分の籾の数を推論から求めてキューに入れる
-    def inference_for_silo(self, q_frames, q_results):
+    def inference_for_silo(self, output_id, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
@@ -413,19 +379,16 @@ class MainProcess:
                             if(x1<bxyz[0] and bxyz[2]<x2 and bxyz[3]<y2 and abs((x2-x1)-(bxyz[2]-bxyz[0]))<BALL_IN_SILO_THRESHOLD):
                                 my_ball_in_silo_counter += 1
                         cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
-                
-                # 処理数に加算
-                self.counters[QUEUE_ID.REAR_OUT] += 1
             
-                # 画像を送信
-                output_data = ()
-                q_results.put((annotated_frame, QUEUE_ID.REAR_OUT, output_data))
+                # キューに送信
+                output_data = (0,0,0)
+                q_results.put((annotated_frame, output_id, output_data))
                 
             except KeyboardInterrupt:
                 break
 
     # サイロの中の自分の籾の数を推論とデプス情報から求めてキューに入れる
-    def inference_for_silo_with_depth(self, q_frames, q_results):
+    def inference_for_silo_with_depth(self, output_id, q_frames, q_results):
         while True:
             try:
                 (color, depth) = q_frames.get()
@@ -469,44 +432,10 @@ class MainProcess:
                                 if (abs(ball_z-silo_z)<BALL_IN_SILO_RANGE):
                                     my_ball_in_silo_counter += 1
                         cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
-                
-                # 処理数に加算
-                self.counters[QUEUE_ID.REAR_OUT] += 1
             
                 # 画像を送信
-                output_data = ()
-                q_results.put((annotated_frame, QUEUE_ID.REAR_OUT, output_data))
+                output_data = (0,0,0)
+                q_results.put((annotated_frame, output_id, output_data))
                 
             except KeyboardInterrupt:
                 break
-
-    # カメラからの画像取得と画像処理、推論(デプス無し)をスレッドごとに分けて実行      
-    def thread_start(self):
-        thread_upper_capturing = threading.Thread(target=self.capturing, args=(self.q_upper_in,self.ucam), daemon=True)
-        thread_lower_capturing = threading.Thread(target=self.capturing, args=(self.q_lower_in,self.lcam), daemon=True)
-        thread_front_detecting = threading.Thread(target=self.masking_for_fan_obtainable_judgement, args=(self.ucam.params,self.lcam.params,self.q_upper_in,self.q_lower_in,self.q_front_out),daemon=True)
-        thread_rear_capturing = threading.Thread(target=self.capturing, args=(self.q_rear_in,self.rcam),daemon=True)
-        thread_rear_detecting = threading.Thread(target=self.inference_for_silo, args=(self.q_rear_in,self.q_rear_out),daemon=True)
-        
-        thread_upper_capturing.start()
-        thread_lower_capturing.start()
-        thread_front_detecting.start()
-        thread_rear_capturing.start()
-        thread_rear_detecting.start()
-        self.start_time = time.time()
-
-    # キューを空にする
-    def finish(self):
-        end_time = time.time()
-        for cam in (self.ucam,self.lcam,self.rcam):
-            self.cameras_dict[thread_id].release()
-            print(f"{thread_id=} : {self.counters[thread_id.value] / (end_time - self.start_time)} fps")
-        
-        for q in self.q_frames_list:
-            while True:
-                try:
-                    q.get_nowait()
-                except queue.Empty:
-                    break
-                
-        print("All Queue Empty")

@@ -78,7 +78,9 @@ class UpperCamera:
             align_to = rs.stream.color
             self.align = rs.align(align_to)
             print(f"{device} fps:{FPS}")
-
+            
+        # 焦点距離の逆数
+        focal_length_inv = 0.0037037
         # ロボットの中心位置を原点とした時のカメラの位置[mm]
         pos_x = -100
         pos_y = 400
@@ -88,9 +90,9 @@ class UpperCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
-            
-        
+        self.params = (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+
+
     def read(self):
         if len(rs.context().query_devices()) == 0:
             return False, None, None
@@ -138,6 +140,8 @@ class LowerCamera:
         #cmd = 'v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 -c white_balance_temperature=4500'
         #ret = subprocess.check_output(cmd, shell=True)
 
+        # 焦点距離の逆数
+        focal_length_inv = 0.0037037
         # ロボットの中心位置を原点とした時のカメラの位置[mm]
         pos_x = 100
         pos_y = 400
@@ -147,7 +151,7 @@ class LowerCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        self.params = (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
     def read(self):
         ret, frame = self.cap.read()
         # Noneはダミー（デプスがある時と同じ引数の数にするため）
@@ -198,6 +202,8 @@ class RearCamera:
             self.align = rs.align(align_to)
             print(f"{device} fps:{FPS}")
 
+        # 焦点距離の逆数
+        focal_length_inv = 0.0037037
         # ロボットの中心位置を原点とした時のカメラの位置[mm]
         pos_x = 0
         pos_y = 300
@@ -207,7 +213,7 @@ class RearCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        self.params = (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
     
     def read(self):
         if len(rs.context().query_devices()) == 0:
