@@ -3,6 +3,7 @@ import cv2
 import pyrealsense2 as rs
 import subprocess
 from enum import Enum
+import time
 
 # カメラからの画像の幅と高さ[pxl]
 FRAME_WIDTH = 320
@@ -91,7 +92,10 @@ class UpperCamera:
         theta_z = 0
         
         self.params = (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
-
+        
+        # counter for calculate fps
+        self.counter = 0
+        self.start_time = time.time()
 
     def read(self):
         if len(rs.context().query_devices()) == 0:
@@ -109,10 +113,13 @@ class UpperCamera:
             depth_image = np.asanyarray(depth_frame.get_data())
             color_image = np.asanyarray(color_frame.get_data())
             
+            self.counter += 1
+            
             return True, color_image, depth_image
 
     def release(self):
         self.pipeline.stop()
+        print(f"UpperCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")
     
     def isOpened(self):
@@ -155,13 +162,20 @@ class LowerCamera:
         theta_z = 0
         
         self.params = (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+    
+        # counter for calculate fps
+        self.counter = 0
+        self.start_time = time.time()
+        
     def read(self):
         ret, frame = self.cap.read()
+        self.counter += 1
         # Noneはダミー（デプスがある時と同じ引数の数にするため）
         return ret, frame, None
 
     def release(self):
         self.cap.release()
+        print(f"LowerCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Capturing Device")
     
     def isOpened(self):
@@ -217,7 +231,11 @@ class RearCamera:
         theta_z = 0
         
         self.params = (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
-    
+
+        # counter for calculate fps
+        self.counter = 0
+        self.start_time = time.time()
+        
     def read(self):
         if len(rs.context().query_devices()) == 0:
             return False, None, None
@@ -234,10 +252,13 @@ class RearCamera:
             depth_image = np.asanyarray(depth_frame.get_data())
             color_image = np.asanyarray(color_frame.get_data())
             
+            self.counter += 1
+                
             return True, color_image, depth_image
 
     def release(self):
         self.pipeline.stop()
+        print(f"RearCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")
     
     def isOpened(self):

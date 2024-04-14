@@ -52,8 +52,8 @@ LINE_MARGIN = 10
 LINE_SLOPE_THRESHOLD = 0.26
 
 class AREA_STATE(Enum):
-    AREA_12 = 0
-    AREA_3 = 1
+    AREA_LINE = 0
+    AREA_STORAGE= 1
 
 def calc_circularity(cnt :np.ndarray) -> float:
     '''
@@ -220,13 +220,8 @@ class DetectObj:
         self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=80,distance_threshold=1.41421356,canny_th1=200.0,canny_th2=50.0,canny_aperture_size=3,do_merge=True)
         
         # 前方のライン検出とボール検出の切り替えのために現在いるエリアを保持
-        self.current_state = AREA_STATE.AREA_12
-        
-        # counters for fps
-        self.counter = []
-        
-        
-        
+        self.current_state = AREA_STATE.AREA_LINE
+     
     # 画像を取得してキューに入れる
     def capturing(self, q_frames, cap):
         while True:
@@ -254,7 +249,7 @@ class DetectObj:
     def detecting_ball_or_line(self, output_id_ball,output_id_line, ucam_params, lcam_params, q_ucam, q_lcam, q_results):
         while True:
             try:
-                if self.current_state == AREA_STATE.AREA_12:
+                if self.current_state == AREA_STATE.AREA_LINE:
                     # 奥行方向のラインがあるかどうか：bool
                     forward = False
                     # 右方向のラインがあるかどうか：bool
@@ -322,7 +317,7 @@ class DetectObj:
                     q_results.put((show_frame, output_id_line, output_data))
                     
                     
-                elif self.current_state == AREA_STATE.AREA_3:
+                elif self.current_state == AREA_STATE.AREA_STORAGE:
                     ucam_frame = q_ucam.get()
                     lcam_frame = q_lcam.get()
 
@@ -371,6 +366,7 @@ class DetectObj:
                     ucam_mask = cv2.cvtColor(ucam_mask,cv2.COLOR_GRAY2BGR)
                     lcam_mask = cv2.cvtColor(lcam_mask,cv2.COLOR_GRAY2BGR)
                     show_frame = np.hstack((ucam_frame,ucam_mask,lcam_frame,lcam_mask))
+                    
                     
                     # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                     output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
@@ -440,7 +436,7 @@ class DetectObj:
                 break
             
     # サイロの中の自分の籾の数を推論から求めてキューに入れる
-    def inference_for_silo(self, output_id, q_frames, q_results):
+    def inference_for_silo(self, rcam_params, output_id, q_frames, q_results):
         while True:
             try:
                 frame = q_frames.get()
@@ -450,7 +446,10 @@ class DetectObj:
                 classes = results[0].boxes.cls
                 boxes = results[0].boxes
                 x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
-                my_ball_in_silo_counter = 0
+                maximum_my_ball_in_silo_count = 0
+                target_silo_x=0
+                target_silo_y=0
+                target_silo_z=0
         
                 # ballのx1,y1,x2,y2を入れる
                 ball_xyz = np.empty((0,4), int)
@@ -467,14 +466,22 @@ class DetectObj:
                 for box, cls in zip(boxes, classes):
                     name = names[int(cls)]
                     x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                    my_ball_in_silo_counter = 0
                     if(name == "silo"):
                         for bxyz in ball_xyz:
                             if(x1<bxyz[0] and bxyz[2]<x2 and bxyz[3]<y2 and abs((x2-x1)-(bxyz[2]-bxyz[0]))<BALL_IN_SILO_THRESHOLD):
                                 my_ball_in_silo_counter += 1
                         cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
-            
+                    
+                    if maximum_my_ball_in_silo_count < my_ball_in_silo_counter:
+                        w = (x1+x2)/2
+                        h = (y1+y2)/2
+                        dis = 1000 #仮の値
+                        (target_silo_x,target_silo_y,target_silo_z) = coordinate_transformation(rcam_params,w,h,dis)
+                        maximum_my_ball_in_silo_count = my_ball_in_silo_counter
+                
                 # キューに送信
-                output_data = (0,0,0)
+                output_data = (target_silo_x,target_silo_y,target_silo_z)
                 q_results.put((annotated_frame, output_id, output_data))
                 
             except KeyboardInterrupt:

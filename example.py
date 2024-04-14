@@ -19,12 +19,10 @@ if __name__ == "__main__":
             key = cv2.waitKey(1)
             if key == ord("q"):
                 break
-            elif key == ord("1"):
-                mainprocess.object_detector.current_state = AREA_STATE.AREA_12
-            elif key == ord("2"):
-                mainprocess.object_detector.current_state = AREA_STATE.AREA_12
-            elif key == ord("3"):
-                mainprocess.object_detector.current_state = AREA_STATE.AREA_3
+            elif key == ord("l"):
+                mainprocess.object_detector.current_state = AREA_STATE.AREA_LINE
+            elif key == ord("s"):
+                mainprocess.object_detector.current_state = AREA_STATE.AREA_STORAGE
             
             if id == OUTPUT_ID.BALL:
                 items,x,y,z,is_obtainable = output_data

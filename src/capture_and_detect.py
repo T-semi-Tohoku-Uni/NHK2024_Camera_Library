@@ -10,7 +10,6 @@ class OUTPUT_ID(Enum):
     SILO = 1
     LINE = 2
 
-
 class MainProcess:
     def __init__(self,model_path):
         self.ucam = UpperCamera()
@@ -36,7 +35,7 @@ class MainProcess:
         self.thread_lower_capturing = threading.Thread(target=self.object_detector.capturing, args=(self.q_lower_in,self.lcam), daemon=True)
         self.thread_front_detecting = threading.Thread(target=self.object_detector.detecting_ball_or_line, args=(OUTPUT_ID.BALL,OUTPUT_ID.LINE,self.ucam.params,self.lcam.params,self.q_upper_in,self.q_lower_in,self.q_out),daemon=True)
         self.thread_rear_capturing = threading.Thread(target=self.object_detector.capturing, args=(self.q_rear_in,self.rcam),daemon=True)
-        self.thread_rear_detecting = threading.Thread(target=self.object_detector.inference_for_silo, args=(OUTPUT_ID.SILO,self.q_rear_in,self.q_out),daemon=True)
+        self.thread_rear_detecting = threading.Thread(target=self.object_detector.inference_for_silo, args=(OUTPUT_ID.SILO,self.rcam.params,self.q_rear_in,self.q_out),daemon=True)
         
         self.thread_upper_capturing.start()
         self.thread_lower_capturing.start()
@@ -56,7 +55,7 @@ class MainProcess:
 
     # release capture
     def terminate_camera(self):
-        for cam in (self.ucam,self.lcam,self.rcam):
+        for cam in (self.lcam,self.ucam,self.rcam):
             cam.release()
 
     
