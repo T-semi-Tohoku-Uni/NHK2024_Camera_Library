@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-from src import MainProcess,OUTPUT_ID
+from src import MainProcess,OUTPUT_ID,AREA_STATE
 
 if __name__ == "__main__":
     #ncnn_model_path = 'models/20240109best_ncnn_model'
@@ -10,16 +10,21 @@ if __name__ == "__main__":
     mainprocess = MainProcess(model_path)
     
     # マルチスレッドの実行
-    mainprocess.thread_area12()
+    mainprocess.thread_start()
     
     while True:
         try:
             frame, id, output_data = mainprocess.q_out.get()
             cv2.imshow(f'{id}', frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            key = cv2.waitKey(1)
+            if key == ord("q"):
                 break
-            if cv2.waitKey(1) & 0xFF == ord("s"):
-                mainprocess.thread_area3()
+            elif key == ord("1"):
+                mainprocess.object_detector.current_state = AREA_STATE.AREA_12
+            elif key == ord("2"):
+                mainprocess.object_detector.current_state = AREA_STATE.AREA_12
+            elif key == ord("3"):
+                mainprocess.object_detector.current_state = AREA_STATE.AREA_3
             
             if id == OUTPUT_ID.BALL:
                 items,x,y,z,is_obtainable = output_data

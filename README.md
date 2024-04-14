@@ -1,6 +1,65 @@
 # NHK2024_Camera_Library
 R2のラズパイで用いるカメラ関係のライブラリ
 
+# src/camera.py
+カメラ関係のスクリプト
+
+# src/detect.py
+検出関係のスクリプト
+
+# src/capture_and_detect.py
+カメラのキャプチャと検出をカメラ毎にスレッドを立てて実行
+
+# 使い方
+インポート
+`from NHK2024_Camera_Library import MainProcess, OUTPUT_ID, AREA_STATE`
+
+ループの前に実行すべきもの
+`# 物体検出モデルのパス`
+`model_path = 'models/20240109best.pt'`
+`# メインプロセスを実行するクラス`
+`mainprocess = MainProcess(model_path)`
+`# マルチスレッドの実行`
+`mainprocess.thread_start()`
+
+ループの中で実行すべきもの
+- 出力の受け取り
+frame:画像（デバッグ用なのでラズパイで動かすときはアンダースコアで受け取らない）
+id:OUTPUT_ID(列挙型)　どの出力形式なのかを表す
+output_data:タプル　出力データ　idによって中身が異なる
+`# 出力を受け取る`
+`frame, id, output_data = mainprocess.q_out.get()`
+
+- idによる出力の受け取り方
+ボールの検出
+items:検出したオブジェクト数  int
+x:目標のボールまでのx座標[mm] float
+y:目標のボールまでのy座標[mm] float
+z:目標のボールまでのz座標[mm] float
+`if id == OUTPUT_ID.BALL:`
+`    items,x,y,z,is_obtainable = output_data`
+
+サイロの検出
+x:目標のサイロまでのx座標[mm] float
+y:目標のサイロまでのy座標[mm] float
+z:目標のサイロまでのz座標[mm] float
+`if id == OUTPUT_ID.SILO:`
+`    x,y,z = output_data`
+
+ラインの検出
+forward:奥行方向のラインが伸びているかどうか bool
+right:右方向のラインが伸びているかどうか bool
+left:左方向のラインが伸びているかどうか bool
+x:ラインがロボットの中心からどれだけずれているか[mm] float
+`if id == OUTPUT_ID.LINE:`
+`    forward, right, left, x = output_data`
+
+
+
+
+
+
+
 # ncnnモデルを使用するためのaptパッケージ
 https://github.com/Tencent/ncnn/wiki/how-to-build#build-for-linux
 ```

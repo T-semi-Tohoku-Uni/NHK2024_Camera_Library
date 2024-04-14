@@ -3,12 +3,13 @@ import queue
 from enum import Enum
 from ultralytics import YOLO
 from .camera import UpperCamera,LowerCamera,RearCamera
-from .detect import DetectObj, DetectLine
+from .detect import DetectObj
 
 class OUTPUT_ID(Enum):
     BALL = 0
     SILO = 1
     LINE = 2
+
 
 class MainProcess:
     def __init__(self,model_path):
@@ -16,7 +17,6 @@ class MainProcess:
         self.lcam = LowerCamera(0)
         self.rcam = RearCamera()
         self.object_detector = DetectObj(model_path)
-        self.line_detector = DetectLine()
 
         self.thread_upper_capturing = threading.Thread()
         self.thread_lower_capturing = threading.Thread()
@@ -31,10 +31,10 @@ class MainProcess:
         self.q_out = queue.Queue(maxsize=1)
 
     # カメラからの画像取得と画像処理、推論(デプス無し)をスレッドごとに分けて実行      
-    def thread_area12(self):
+    def thread_start(self):
         self.thread_upper_capturing = threading.Thread(target=self.object_detector.capturing, args=(self.q_upper_in,self.ucam), daemon=True)
         self.thread_lower_capturing = threading.Thread(target=self.object_detector.capturing, args=(self.q_lower_in,self.lcam), daemon=True)
-        self.thread_front_detecting = threading.Thread(target=self.line_detector.detect_horizon_vertical, args=(OUTPUT_ID.LINE,self.lcam.params,self.q_lower_in,self.q_out),daemon=True)
+        self.thread_front_detecting = threading.Thread(target=self.object_detector.detecting_ball_or_line, args=(OUTPUT_ID.BALL,OUTPUT_ID.LINE,self.ucam.params,self.lcam.params,self.q_upper_in,self.q_lower_in,self.q_out),daemon=True)
         self.thread_rear_capturing = threading.Thread(target=self.object_detector.capturing, args=(self.q_rear_in,self.rcam),daemon=True)
         self.thread_rear_detecting = threading.Thread(target=self.object_detector.inference_for_silo, args=(OUTPUT_ID.SILO,self.q_rear_in,self.q_out),daemon=True)
         
@@ -43,10 +43,6 @@ class MainProcess:
         self.thread_front_detecting.start()
         self.thread_rear_capturing.start()
         self.thread_rear_detecting.start()
-
-    def thread_area3(self):
-        self.thread_front_detecting = threading.Thread(target=self.object_detector.masking_for_fan_obtainable_judgement, args=(OUTPUT_ID.BALL,self.ucam.params,self.lcam.params,self.q_upper_in,self.q_lower_in,self.q_out),daemon=True)
-        self.thread_front_detecting.start()
 
     # キューを空にする
     def terminate_queue(self):
