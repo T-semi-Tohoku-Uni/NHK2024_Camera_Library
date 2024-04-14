@@ -119,11 +119,14 @@ class UpperCamera:
         return False if len(rs.context().query_devices())==0 else True
 
 class LowerCamera:
-    def __init__(self):
-        device_id = usb_video_device(PORT_ID.USB2_LOWER.value)
+    def __init__(self, id=None):
+        if id is not None:
+            device_id = id
+        else:
+            device_id = usb_video_device(PORT_ID.USB2_LOWER.value)
         # Camera Settings
-        self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
-        # self.cap = cv2.VideoCapture(device_id)
+        #self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
+        self.cap = cv2.VideoCapture(device_id)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)

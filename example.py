@@ -10,7 +10,7 @@ if __name__ == "__main__":
     mainprocess = MainProcess(model_path)
     
     # マルチスレッドの実行
-    mainprocess.thread_start()
+    mainprocess.thread_area12()
     
     while True:
         try:
@@ -18,6 +18,8 @@ if __name__ == "__main__":
             cv2.imshow(f'{id}', frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break
+            if cv2.waitKey(1) & 0xFF == ord("s"):
+                mainprocess.thread_area3()
             
             if id == OUTPUT_ID.BALL:
                 items,x,y,z,is_obtainable = output_data
@@ -25,6 +27,9 @@ if __name__ == "__main__":
             elif id == OUTPUT_ID.SILO:
                 x,y,z = output_data
                 print(f"\n{id=}, {x=}, {y=}, {z=}")
+            elif id == OUTPUT_ID.LINE:
+                forward, right, left, x = output_data
+                print(f"\n{id=}, {forward=}, {right=}, {left=}, {x=}")
             
         except KeyboardInterrupt:
             break

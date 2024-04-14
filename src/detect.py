@@ -41,6 +41,16 @@ OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 80
 
+# カメラからラインの検出点までの距離[mm]
+LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 450
+
+# 画像端から何ピクセル分の点までを、画像端から伸びてる線分とみなすか
+LINE_MARGIN = 10
+
+# 縦線、横線の角度の閾値[rad]
+LINE_SLOPE_THRESHOLD = 0.26
+
+
 
 def calc_circularity(cnt :np.ndarray) -> float:
     '''
@@ -439,3 +449,87 @@ class DetectObj:
                 
             except KeyboardInterrupt:
                 break
+
+class DetectLine:
+    def __init__(self) -> None:
+         pass
+     
+    def detect_horizon_vertical(self, output_id, lcam_params, q_lcam, q_results):
+        fld = cv2.ximgproc.createFastLineDetector(length_threshold=50,distance_threshold=1.414213562,canny_th1=100.0,canny_th2=200.0,canny_aperture_size=3,do_merge=True)
+
+        while True:
+            try:
+                # 奥行方向のラインがあるかどうか：bool
+                forward = False
+                # 右方向のラインがあるかどうか：bool
+                right = False
+                # 左方向のラインがあるかどうか：bool
+                left = False
+                # 奥行方向のラインの、水平方向のずれを出力(ロボットの中心から前方向300mmくらい)
+                diff_x = 0.0
+                
+
+                # カメラから画像を読み込む
+                frame = q_lcam.get()
+                # グレースケール化
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                
+                # 出力画像にガウシアンフィルタを適用する。
+                blur = cv2.GaussianBlur(gray, ksize=(7,7),sigmaX=0)
+                
+                # ライン検出
+                lines = fld.detect(blur)
+
+                # image for debug
+                all_lines = fld.drawSegments(frame,lines)
+                right_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
+                left_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
+                forward_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
+
+                if lines is not None:
+                    # 画像の右端に点がある線分のリスト
+                    right_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
+                    # 横線かどうかの判定
+                    right_list = [line for line in right_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    right_list = [line.astype(int) for line in right_list]
+                    [cv2.line(right_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in right_list]
+                    right = True if len(right_list)>=2 else False
+
+                    # 画像の左端に点がある線分のリスト
+                    left_list = [line for line in lines if line[0][0]>FRAME_WIDTH-LINE_MARGIN or line[0][2]>FRAME_WIDTH-LINE_MARGIN]
+                    # 横線かどうかの判定
+                    left_list = [line for line in left_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    left_list = [line.astype(int) for line in left_list]
+                    [cv2.line(left_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in left_list]
+                    left = True if len(left_list)>=2 else False
+
+                    # 画像の下端に点がある線分のリスト
+                    forward_list = [line for line in lines if line[0][1]>FRAME_HEIGHT-LINE_MARGIN or line[0][3]>FRAME_HEIGHT-LINE_MARGIN]
+                    # 縦線かどうかの判定
+                    forward_list = [line for line in forward_list if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    forward_list = [line.astype(int) for line in forward_list]
+                    [cv2.line(forward_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
+                    forward = True if len(forward_list)>=2 else False
+
+                    # 縦線の下の点に対応するxの値とFRAME_WIDTH/2の差をとったリスト
+                    forward_x_list = [abs(p[0][0]-FRAME_WIDTH/2) if p[0][1]>p[0][3] else abs(p[0][2]-FRAME_WIDTH/2) for p in forward_list]
+                    forward_x_list.sort()
+                    if len(forward_x_list)>=2:
+                        # 画像の中心に近い2本の線分のx座標の平均
+                        diff_x = (forward_x_list[0]+forward_x_list[1])/2
+
+                show_frame = np.vstack((all_lines,right_frame,left_frame,forward_frame))
+
+                x,y,z = coordinate_transformation(lcam_params,diff_x,FRAME_HEIGHT-LINE_MARGIN,LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
+                
+                output_data = (forward, right, left, x)
+                # キューに結果を入れる
+                q_results.put((show_frame, output_id, output_data))
+                
+            except KeyboardInterrupt:
+                    break
+"""                
+if __name__ == "__main__":
+    detector = DetectLine()
+    detector.line_detector("id",(0.0037037,100,400,150,30*np.pi/180,0,0),queue.Queue(),queue.Queue())
+"""
