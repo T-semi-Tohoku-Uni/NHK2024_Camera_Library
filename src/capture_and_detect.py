@@ -8,7 +8,7 @@ from .detect import DetectObj
 class MainProcess:
     def __init__(self,model_path):
         self.ucam = UpperCamera()
-        self.lcam = LowerCamera()
+        self.lcam = LowerCamera(0)
         self.rcam = RearCamera()
         self.object_detector = DetectObj(model_path)
 
@@ -50,7 +50,7 @@ class MainProcess:
 
     # release capture
     def terminate_camera(self):
-        for cam in (self.lcam,self.ucam,self.rcam):
+        for cam in (self.ucam,self.lcam,self.rcam):
             cam.release()
 
     def finish(self):
