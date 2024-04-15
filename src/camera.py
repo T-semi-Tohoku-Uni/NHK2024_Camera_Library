@@ -12,6 +12,9 @@ FRAME_HEIGHT = 240
 # FPS
 FPS = 30
 
+# WHITE BALANCE
+WB = 4500
+
 class PORT_ID(Enum):
     USB3_UPPER = 1
     USB3_LOWER = 2
@@ -80,8 +83,8 @@ class UpperCamera:
             self.align = rs.align(align_to)
             print(f"{device} fps:{FPS}")
             
-        # 焦点距離の逆数
-        focal_length_inv = 0.0037037
+        # 焦点距離
+        focal_length = 270
         # ロボットの中心位置を原点とした時のカメラの位置[mm]
         pos_x = -100
         pos_y = 400
@@ -91,7 +94,7 @@ class UpperCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
         
         # counter for calculate fps
         self.counter = 0
@@ -139,19 +142,16 @@ class LowerCamera:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         set_fps = self.cap.set(cv2.CAP_PROP_FPS, FPS)
-        print(f"device_id_{device_id} fps:{self.cap.get(cv2.CAP_PROP_FPS)}, {set_fps}")
-        
-        # OpenCVを用いたホワイトバランスの固定
         self.cap.set(cv2.CAP_PROP_AUTO_WB, 0.0)
-        self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, 4500)
-        print(f"{self.cap.get(cv2.CAP_PROP_WB_TEMPERATURE)=}")
-
+        set_wb = self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, WB)
+        print(f"device_id_{device_id} fps:{self.cap.get(cv2.CAP_PROP_FPS)}->{set_fps} wb:{self.cap.get(cv2.CAP_PROP_WB_TEMPERATURE)}->{set_wb}")
+        
         # v4l2-ctlを用いたホワイトバランスの固定
         #cmd = 'v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 -c white_balance_temperature=4500'
         #ret = subprocess.check_output(cmd, shell=True)
 
-        # 焦点距離の逆数
-        focal_length_inv = 0.0037037
+        # 焦点距離
+        focal_length = 270
         # ロボットの中心位置を原点とした時のカメラの位置[mm]
         pos_x = 100
         pos_y = 400
@@ -161,7 +161,7 @@ class LowerCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
     
         # counter for calculate fps
         self.counter = 0
@@ -219,8 +219,8 @@ class RearCamera:
             self.align = rs.align(align_to)
             print(f"{device} fps:{FPS}")
 
-        # 焦点距離の逆数
-        focal_length_inv = 0.0037037
+        # 焦点距離
+        focal_length = 270
         # ロボットの中心位置を原点とした時のカメラの位置[mm]
         pos_x = 0
         pos_y = 300
@@ -230,7 +230,7 @@ class RearCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
 
         # counter for calculate fps
         self.counter = 0

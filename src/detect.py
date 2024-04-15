@@ -22,11 +22,18 @@ BALL_IN_SILO_THRESHOLD = 10
 RS_MAX_DISTANCE = 5000
 RS_MIN_DISTANCE = 100
 
-# 大津の二値化を適用するデプスの間隔を表す配列
-BINS=[i for i in range(RS_MIN_DISTANCE,RS_MAX_DISTANCE+RS_MIN_DISTANCE,DISTANCE_INTERVAL)]
+# デプス画像に対して大津の二値化を適用する時のデプスの間隔を表す配列
+DEPTH_BINS=[i for i in range(RS_MIN_DISTANCE,RS_MAX_DISTANCE+RS_MIN_DISTANCE,DISTANCE_INTERVAL)]
+
+# 輝度に対して大津の二値化を適用する時の輝度値の間隔を表す配列
+LUMINANCE_BINS=[i for i in range(0,255,1)]
+
 
 # 籾の半径[mm]
 PADDY_RICE_RADIUS = 100.0
+
+# サイロの高さ[mm]
+SILO_HEIGHT = 425.0
 
 # 検出可能最大距離[mm]
 DETECTABLE_MAX_DIS = 10000.0
@@ -54,6 +61,11 @@ LINE_SLOPE_THRESHOLD = 0.26
 class AREA_STATE(Enum):
     AREA_LINE = 0
     AREA_STORAGE= 1
+    
+class OUTPUT_ID(Enum):
+    BALL = 0
+    SILO = 1
+    LINE = 2
 
 def calc_circularity(cnt :np.ndarray) -> float:
     '''
@@ -81,19 +93,22 @@ def calc_circularity(cnt :np.ndarray) -> float:
         cir = 0
     return cir
 
-def calc_distance(r :float) -> float:
+def calc_distance(pxl_size :float, real_size :float) -> float:
     """
     球の半径から距離を計算する
     
     Parameters
     ----------
-    r : float
-    フレーム中の球の半径(ピクセル)
+    pxl_size : float
+    フレーム中のオブジェクトの大きさ(ピクセル)
+    
+    real_size : float
+    実際のオブジェクトの大きさ(mm)
     
     Returns
     -------
     dis : float
-        カメラから球までの距離[mm](キャリブレーションを用いた値)
+        カメラからオブジェクトまでの距離[mm](キャリブレーションを用いた値)
     """
     pxl = FRAME_HEIGHT
     # y方向の焦点距離(inrofの時のBufferlo web camera)
@@ -103,9 +118,9 @@ def calc_distance(r :float) -> float:
     # WebカメラのCMOSセンサー(1/4インチと仮定)の高さ[mm]
     camy = 2.7
     try:
-        r = r * camy / pxl
+        pxl_size = pxl_size * camy / pxl
         fy = fy * camy / pxl
-        dis = PADDY_RICE_RADIUS *  fy / r
+        dis = real_size *  fy / pxl_size
     except ZeroDivisionError:
         dis = DETECTABLE_MAX_DIS
     return dis
@@ -135,8 +150,8 @@ def coordinate_transformation(params,w, h, dis):
         垂直方向 [mm]
     
     """
-    (focal_length_inv,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z) = params
-    internal_param_inv = np.array([[focal_length_inv, 0, 0], [0,focal_length_inv, 0], [0, 0, 1] ,[0, 0, 1/dis]])
+    (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z) = params
+    internal_param_inv = np.array([[1/focal_length, 0, 0], [0,1/focal_length, 0], [0, 0, 1] ,[0, 0, 1/dis]])
     external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), pos_x],
                         [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), pos_y],
                         [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), pos_z],
@@ -159,7 +174,7 @@ def threshold_otsu(hist, min_value=0, max_value=10):
         n1 = sum(hist[:th])
         n2 = sum(hist[th:])
         
-        # クラス1とクラス2のdepthヒストグラム値(depth値ではない)の平均を計算
+        # クラス1とクラス2のヒストグラム値の平均を計算
         if n1 == 0 : mu1 = 0
         else : mu1 = sum([i * hist[i] for i in range(0,th)]) / n1   
         if n2 == 0 : mu2 = 0
@@ -217,7 +232,7 @@ class DetectObj:
         self.red_upper_mask_2 = np.array([255,255,255])
         
         # fast line detector
-        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=80,distance_threshold=1.41421356,canny_th1=200.0,canny_th2=50.0,canny_aperture_size=3,do_merge=True)
+        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=10,distance_threshold=1.41421356,canny_th1=200.0,canny_th2=50.0,canny_aperture_size=3,do_merge=False)
         
         # 前方のライン検出とボール検出の切り替えのために現在いるエリアを保持
         self.current_state = AREA_STATE.AREA_LINE
@@ -246,7 +261,7 @@ class DetectObj:
                 break
     
     # ボール検出（閾値）とライン検出をself.current_stateで切り替える
-    def detecting_ball_or_line(self, output_id_ball,output_id_line, ucam_params, lcam_params, q_ucam, q_lcam, q_results):
+    def detecting_ball_or_line(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
         while True:
             try:
                 if self.current_state == AREA_STATE.AREA_LINE:
@@ -261,11 +276,12 @@ class DetectObj:
                     
                     # カメラから画像を読み込む
                     frame = q_lcam.get()
-                    # グレースケール化
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    
+                    # BGRのBを抽出
+                    binary = frame[:,:,0]
                     
                     # 出力画像にガウシアンフィルタを適用する。
-                    blur = cv2.GaussianBlur(gray, ksize=(7,7),sigmaX=0)
+                    blur = cv2.GaussianBlur(binary, ksize=(7,7),sigmaX=0)
                     
                     # ライン検出
                     lines = self.fld.detect(blur)
@@ -314,7 +330,7 @@ class DetectObj:
                     
                     output_data = (forward, right, left, x)
                     # キューに結果を入れる
-                    q_results.put((show_frame, output_id_line, output_data))
+                    q_out.put((show_frame, OUTPUT_ID.LINE, output_data))
                     
                     
                 elif self.current_state == AREA_STATE.AREA_STORAGE:
@@ -347,7 +363,7 @@ class DetectObj:
                         [cv2.circle(lcam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(lcam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1]))
+                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(lcam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                     # もし下部カメラで円が検出されなければ
                     else:
@@ -359,7 +375,7 @@ class DetectObj:
                             [cv2.circle(ucam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
                             items = len(circles)
                             target = circles.index(max(circles, key=lambda x:x[1]))
-                            (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1]))
+                            (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
                             is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
 
                     # 画像のタイプを揃える
@@ -367,79 +383,18 @@ class DetectObj:
                     lcam_mask = cv2.cvtColor(lcam_mask,cv2.COLOR_GRAY2BGR)
                     show_frame = np.hstack((ucam_frame,ucam_mask,lcam_frame,lcam_mask))
                     
-                    
                     # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                     output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                    q_results.put((show_frame, output_id_ball, output_data))
-                
-            except KeyboardInterrupt:
-                break
-                
-    
-    # 推論によりボールをファンで吸い込めるかどうか判定してキューに入れる
-    def inference_for_fan_obtainable_judgement(self,output_id, ucam_params, lcam_params, q_ucam, q_lcam, q_results):
-        while True:
-            try:
-                # 初期化
-                paddy_rice_x = 0
-                paddy_rice_y = 0
-                paddy_rice_z = DETECTABLE_MAX_DIS
-
-                # 下部カメラから推論
-                lcam_frame = q_lcam.get()
-                lcam_results = self.model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False)
-                lcam_annotated_frame = lcam_results[0].plot()
-                names = lcam_results[0].names
-                classes = lcam_results[0].boxes.cls
-                boxes = lcam_results[0].boxes
-                # 上部カメラから推論
-                ucam_frame = q_ucam.get()
-                ucam_results = self.model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False)
-                ucam_annotated_frame = ucam_results[0].plot()
-                
-                # もし、下部カメラで検出できていれば
-                if boxes.dim() > 0:
-                    for box, cls in zip(boxes, classes):
-                        name = names[int(cls)]
-                        if(name == "blueball"):
-                            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                            # 長方形の長辺を籾の半径とする
-                            r = max(abs(x1-x2)/2, abs(y1-y2)/2)
-                            z = calc_distance(r)
-                            # 籾が複数ある場合は最も近いものの座標を返す
-                            if z < paddy_rice_z:
-                                (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(lcam_params,int((x1+x2)/2),int((y1+y2)/2),z)
-                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-                # そうでなければ
-                else:
-                    names = ucam_results[0].names
-                    classes = ucam_results[0].boxes.cls
-                    boxes = ucam_results[0].boxes
-                    for box, cls in zip(boxes, classes):
-                        name = names[int(cls)]
-                        if(name == "blueball"):
-                            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                            # 長方形の長辺を籾の半径とする
-                            r = max(abs(x1-x2)/2, abs(y1-y2)/2)
-                            z = calc_distance(r)
-                            # 籾が複数ある場合は最も近いものの座標を返す
-                            if z < paddy_rice_z:
-                                (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int((x1+x2)/2),int((y1+y2)/2),z)
-                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-
-                show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
-                # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-                output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_results.put((show_frame, output_id, output_data))
+                    q_out.put((show_frame, OUTPUT_ID.BALL, output_data))
                 
             except KeyboardInterrupt:
                 break
             
     # サイロの中の自分の籾の数を推論から求めてキューに入れる
-    def inference_for_silo(self, rcam_params, output_id, q_frames, q_results):
+    def inference_for_silo(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
         while True:
             try:
-                frame = q_frames.get()
+                frame = q_rcam.get()
                 results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=False)
                 annotated_frame = results[0].plot()
                 names = results[0].names
@@ -476,66 +431,13 @@ class DetectObj:
                     if maximum_my_ball_in_silo_count < my_ball_in_silo_counter:
                         w = (x1+x2)/2
                         h = (y1+y2)/2
-                        dis = 1000 #仮の値
+                        dis = calc_distance(abs(y1-y2),SILO_HEIGHT)
                         (target_silo_x,target_silo_y,target_silo_z) = coordinate_transformation(rcam_params,w,h,dis)
                         maximum_my_ball_in_silo_count = my_ball_in_silo_counter
                 
                 # キューに送信
                 output_data = (target_silo_x,target_silo_y,target_silo_z)
-                q_results.put((annotated_frame, output_id, output_data))
-                
-            except KeyboardInterrupt:
-                break
-
-    # サイロの中の自分の籾の数を推論とデプス情報から求めてキューに入れる
-    def inference_for_silo_with_depth(self, output_id, q_frames, q_results):
-        while True:
-            try:
-                (color, depth) = q_frames.get()
-                results = self.model.predict(color, imgsz=320, conf=0.5, verbose=False)
-                annotated_frame = results[0].plot()
-                names = results[0].names
-                classes = results[0].boxes.cls
-                boxes = results[0].boxes
-                x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
-                my_ball_in_silo_counter = 0
-        
-                # ballのx1,y1,x2,y2,depthの平均を入れる
-                ball_xyz = np.empty((0,5), int)
-                
-                for box, cls in zip(boxes, classes):
-                    name = names[int(cls)]
-                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    if(name == "blueball"):
-                        try:
-                            ball_area = depth[y1:y2,x1:x2].copy()
-                            ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2,np.mean(ball_area[ball_area>RS_MIN_DISTANCE])]],axis=0)
-                        except Exception as err:
-                            print(f"Unexpected {err=}, {type(err)=}")
-                
-                for box, cls in zip(boxes, classes):
-                    name = names[int(cls)]
-                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    if(name == "silo"):
-                        hist, _ = np.histogram(depth[y1:y2,x1:x2], BINS)
-                        th = threshold_otsu(hist, 0, len(hist))
-                        # 背景のdepthを0にする
-                        depth[y1:y2,x1:x2][th*DISTANCE_INTERVAL<depth[y1:y2,x1:x2]]=0
-                        for bxyz in ball_xyz:
-                            if(x1<bxyz[0] and bxyz[2]<x2):
-                                # depth_imageからボールの領域を削除(min_distance以下の値にする)
-                                depth[int(bxyz[1]):int(bxyz[3]),int(bxyz[0]):int(bxyz[2])] = 0
-                                ball_z = int(bxyz[4])
-                                silo_z = np.mean(depth[y1:y2,x1:x2][depth[y1:y2,x1:x2]>RS_MIN_DISTANCE])
-                                #cv2.putText(annotated_image,f"ball_z:{ball_z}",(int(bxyz[0]),int(bxyz[1]-10)),cv2.FONT_HERSHEY_DUPLEX,1.0,(255,255,0))
-                                #cv2.putText(annotated_image,f"silo_z:{silo_z}",(int(x1),int(y1)-10),cv2.FONT_HERSHEY_DUPLEX,1.0,(255,255,0))
-                                if (abs(ball_z-silo_z)<BALL_IN_SILO_RANGE):
-                                    my_ball_in_silo_counter += 1
-                        cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
-            
-                # 画像を送信
-                output_data = (0,0,0)
-                q_results.put((annotated_frame, output_id, output_data))
+                q_out.put((annotated_frame, OUTPUT_ID.SILO, output_data))
                 
             except KeyboardInterrupt:
                 break
