@@ -8,7 +8,7 @@ from .detect import DetectObj
 class MainProcess:
     def __init__(self,model_path):
         self.ucam = UpperCamera()
-        self.lcam = LowerCamera(0)
+        self.lcam = LowerCamera()
         self.rcam = RearCamera()
         self.object_detector = DetectObj(model_path)
 

@@ -15,6 +15,12 @@ FPS = 30
 # WHITE BALANCE
 WB = 4500
 
+# Front Upper Realsense serial number
+FRONT_UPPER_REALSENSE_SERIAL_NUMBER = "242622071603"
+
+# Rear Realsense serial number
+REAR_REALSENSE_SERIAL_NUMBER = "944122072123"
+
 class PORT_ID(Enum):
     USB3_UPPER = 1
     USB3_LOWER = 2
@@ -48,9 +54,7 @@ def usb_video_device(port : int):
 
 class UpperCamera:
     def __init__(self):
-        if len(rs.context().query_devices()) == 0:
-            print(f"realsense not connected")
-        else:
+        try:
             # Configure depth and color streams
             self.pipeline = rs.pipeline()
             config = rs.config()
@@ -64,12 +68,13 @@ class UpperCamera:
             for s in device.sensors:
                 if s.get_info(rs.camera_info.name) == 'RGB Camera':
                     found_rgb = True
+                    rgb_camera_sensor = s
                     break
             if not found_rgb:
                 print("The demo requires Depth camera with Color sensor")
                 exit(0)
             # RealSenseのシリアル番号で指定
-            config.enable_device("242622071603")
+            config.enable_device(FRONT_UPPER_REALSENSE_SERIAL_NUMBER)
             config.enable_stream(rs.stream.depth, 424, 240, rs.format.z16, FPS)
             config.enable_stream(rs.stream.color, FRAME_WIDTH, FRAME_HEIGHT, rs.format.bgr8, FPS)
             
@@ -81,8 +86,12 @@ class UpperCamera:
             # The "align_to" is the stream type to which we plan to align depth frames.
             align_to = rs.stream.color
             self.align = rs.align(align_to)
-            print(f"{device} fps:{FPS}")
-            
+            rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
+            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
+        except RuntimeError:
+            print(f"realsense{FRONT_UPPER_REALSENSE_SERIAL_NUMBER} not connected")
+        
         # 焦点距離
         focal_length = 270
         # ロボットの中心位置を原点とした時のカメラの位置[mm]
@@ -101,7 +110,9 @@ class UpperCamera:
         self.start_time = time.time()
 
     def read(self):
-        if len(rs.context().query_devices()) == 0:
+        devices = rs.context().query_devices()
+        serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in devices]
+        if FRONT_UPPER_REALSENSE_SERIAL_NUMBER not in serial_number_list:
             return False, None, None
         else:
             # Wait for a coherent pair of frames: depth and color
@@ -126,7 +137,9 @@ class UpperCamera:
         print("Closed Realsense Device")
     
     def isOpened(self):
-        return False if len(rs.context().query_devices())==0 else True
+        devices = rs.context().query_devices()
+        serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in devices]
+        return False if FRONT_UPPER_REALSENSE_SERIAL_NUMBER not in serial_number_list else True
 
 class LowerCamera:
     def __init__(self, id=None):
@@ -184,9 +197,7 @@ class LowerCamera:
 
 class RearCamera:
     def __init__(self):
-        if len(rs.context().query_devices()) == 0:
-            print(f"realsense not connected")
-        else:
+        try:
             # Configure depth and color streams
             self.pipeline = rs.pipeline()
             config = rs.config()
@@ -200,12 +211,13 @@ class RearCamera:
             for s in device.sensors:
                 if s.get_info(rs.camera_info.name) == 'RGB Camera':
                     found_rgb = True
+                    rgb_camera_sensor = s
                     break
             if not found_rgb:
                 print("The demo requires Depth camera with Color sensor")
                 exit(0)
             # RealSenseのシリアル番号で指定
-            config.enable_device("944122072123")
+            config.enable_device(REAR_REALSENSE_SERIAL_NUMBER)
             config.enable_stream(rs.stream.depth, 424, 240, rs.format.z16, FPS)
             config.enable_stream(rs.stream.color, FRAME_WIDTH, FRAME_HEIGHT, rs.format.bgr8, FPS)
             
@@ -217,7 +229,12 @@ class RearCamera:
             # The "align_to" is the stream type to which we plan to align depth frames.
             align_to = rs.stream.color
             self.align = rs.align(align_to)
-            print(f"{device} fps:{FPS}")
+            rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
+            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
+        except RuntimeError:
+            print(f"realsense{REAR_REALSENSE_SERIAL_NUMBER} not connected")
+         
 
         # 焦点距離
         focal_length = 270
@@ -237,7 +254,9 @@ class RearCamera:
         self.start_time = time.time()
         
     def read(self):
-        if len(rs.context().query_devices()) == 0:
+        devices = rs.context().query_devices()
+        serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in devices]
+        if REAR_REALSENSE_SERIAL_NUMBER not in serial_number_list:
             return False, None, None
         else:
             # Wait for a coherent pair of frames: depth and color
@@ -262,4 +281,6 @@ class RearCamera:
         print("Closed Realsense Device")
     
     def isOpened(self):
-        return False if len(rs.context().query_devices())==0 else True
+        devices = rs.context().query_devices()
+        serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in devices]
+        return False if REAR_REALSENSE_SERIAL_NUMBER not in serial_number_list else True
