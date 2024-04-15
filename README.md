@@ -65,8 +65,16 @@ https://github.com/Tencent/ncnn/wiki/how-to-build#build-for-linux
 ```
 sudo apt install build-essential git cmake libprotobuf-dev protobuf-compiler libomp-dev libvulkan-dev vulkan-tools libopencv-dev
 ```
-# ラズパイでRealsenseを使えるようにしたかった
-- https://github.com/IntelRealSense/librealsense/blob/development/doc/installation.md#prerequisitesを参考にしたやつ
+
+## ラズパイでRealsenseを使えるようにしたかった
+- まず、以下を参考にやってみた\
+https://github.com/IntelRealSense/librealsense/blob/development/doc/installation.md#prerequisites
+https://raspida.com/rpi-buster-error
+
+```
+sudo apt-get update --allow-releaseinfo-change
+sudo apt full-upgrade
+```
 
 - 前準備
 ```
@@ -86,47 +94,116 @@ git clone https://github.com/IntelRealSense/librealsense.git
 ./scripts/setup_udev_rules.sh
 ```
 ここでPermission deniedがたくさん出てエラー
-これだけ実行した
+
+- 次に以下を参考にやってみた\
+https://github.com/IntelRealSense/librealsense/blob/master/doc/installation_raspbian.md
+https://openvino.jp/intel-realsense-camera-d435i-2/
+
+swap追加
 ```
-rm -rf librealsense/
+sudo nano /etc/dphys-swapfile
+```
+CONF_SWAPSIZE=2048に変更
+
+```
+sudo /etc/init.d/dphys-swapfile restart swapon -s
 ```
 
-- https://github.com/IntelRealSense/librealsense/blob/master/doc/distribution_linux.mdを参考にしたやつ
+E: Unable to locate packageが出るものは飛ばした結果、以下をインストール
 ```
-sudo mkdir -p /etc/apt/keyrings
-curl -sSf https://librealsense.intel.com/Debian/librealsense.pgp | sudo tee /etc/apt/keyrings/librealsense.pgp > /dev/null
-```
-```
-echo "deb [signed-by=/etc/apt/keyrings/librealsense.pgp] https://librealsense.intel.com/Debian/apt-repo `lsb_release -cs` main" | \
-sudo tee /etc/apt/sources.list.d/librealsense.list
-sudo apt-get update
-```
-ここでエラー
-```
-deb [signed-by=/etc/apt/keyrings/librealsense.pgp] https://librealsense.intel.com/Debian/apt-repo bookworm main
-Hit:1 http://deb.debian.org/debian bookworm InRelease
-Get:2 http://deb.debian.org/debian-security bookworm-security InRelease [48.0 kB]
-Hit:3 http://deb.debian.org/debian bookworm-updates InRelease                
-Get:4 http://archive.raspberrypi.com/debian bookworm InRelease [23.6 kB]         
-Err:5 https://librealsense.intel.com/Debian/apt-repo bookworm InRelease
-  403  Forbidden [IP: 13.227.62.101 443]
-Reading package lists... Done                            
-E: Repository 'http://deb.debian.org/debian-security bookworm-security InRelease' changed its 'Label' value from 'Debian' to 'Debian-Security'
-N: Repository 'http://deb.debian.org/debian-security bookworm-security InRelease' changed its 'Version' value from '12-updates' to '12'
-N: Repository 'http://deb.debian.org/debian-security bookworm-security InRelease' changed its 'Suite' value from 'stable-updates' to 'stable-security'
-E: Repository 'http://deb.debian.org/debian-security bookworm-security InRelease' changed its 'Codename' value from 'bookworm-updates' to 'bookworm-security'
-N: This must be accepted explicitly before updates for this repository can be applied. See apt-secure(8) manpage for details.
-E: Failed to fetch https://librealsense.intel.com/Debian/apt-repo/dists/bookworm/InRelease  403  Forbidden [IP: 13.227.62.101 443]
-E: The repository 'https://librealsense.intel.com/Debian/apt-repo bookworm InRelease' is not signed.
-N: Updating from such a repository can't be done securely, and is therefore disabled by default.
-N: See apt-secure(8) manpage for repository creation and user configuration details.
-E: Repository 'http://archive.raspberrypi.com/debian bookworm InRelease' changed its 'Origin' value from 'Debian' to 'Raspberry Pi Foundation'
-E: Repository 'http://archive.raspberrypi.com/debian bookworm InRelease' changed its 'Label' value from 'Debian' to 'Raspberry Pi Foundation'
-N: Repository 'http://archive.raspberrypi.com/debian bookworm InRelease' changed its 'Version' value from '12-updates' to ''
-N: Repository 'http://archive.raspberrypi.com/debian bookworm InRelease' changed its 'Suite' value from 'stable-updates' to 'stable'
-E: Repository 'http://archive.raspberrypi.com/debian bookworm InRelease' changed its 'Codename' value from 'bookworm-updates' to 'bookworm'
-N: This must be accepted explicitly before updates for this repository can be applied. See apt-secure(8) manpage for details.
-(env) pi@tsemiR2:~/NHK2024 $ 
+sudo apt-get install -y libdrm-amdgpu1 libdrm-dev libdrm-exynos1 libdrm-freedreno1 libdrm-nouveau2 libdrm-omap1 libdrm-radeon1 libdrm-tegra0 libdrm2
+
+sudo apt-get install libglu1-mesa libglu1-mesa-dev glusterfs-common libglu1-mesa libglu1-mesa-dev
+
+sudo apt-get install libglu1-mesa libglu1-mesa-dev mesa-utils mesa-utils-extra xorg-dev libgtk-3-dev libusb-1.0-0-dev
 ```
 
+librealsenseのクローン
+```
+git clone https://github.com/IntelRealSense/librealsense.git
 
+cd librealsense
+
+sudo cp config/99-realsense-libusb.rules /etc/udev/rules.d/ 
+
+sudo udevadm control --reload-rules && udevadm trigger 
+```
+
+ここでPermission deniedがたくさん出てエラー
+
+- 以下を参考にやってみた\
+https://github.com/datasith/Ai_Demos_RPi/wiki/Raspberry-Pi-4-and-Intel-RealSense-D435
+
+```
+sudo su
+udevadm control --reload-rules && udevadm trigger
+exit
+```
+
+pathの追加
+~/.bashrcにexport LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATHを追加
+```
+source ~/.bashrc 
+```
+
+- まだインストールしてなかったパッケージのインストール
+```
+sudo apt-get install automake libtool
+```
+
+システム領域の拡張
+```
+sudo raspi-config
+```
+Advanced Options -> Expand Filesystemsを選択し、再起動
+
+~~protobufのインストール~~
+
+~~`cd ~`~~
+~~git clone --depth=1 -b v3.10.0 https://github.com/google/protobuf.git~~
+~~cd protobuf~~
+~~./autogen.sh~~
+~~./configure~~
+~~make -j1~~
+~~sudo make install~~
+~~cd python~~
+~~export LD_LIBRARY_PATH=../src/.libs~~
+~~python3 setup.py build --cpp_implementation~~
+
+~~error: invalid use of incomplete type ‘PyFrameObject’ {aka ‘struct _frame’}がでる。~~
+~~->python 3.11以降'PyFrameObject'が使えないことによるエラーらしい~~
+
+~~sudo ldconfig をして sudo make uninstall をして cd .. && rm -rf protobuf/~~\
+protobuf,libtbb-devはインストールされていたので飛ばす
+
+librealsenseのmake
+```
+cd ~/librealsense
+mkdir  build  && cd build
+cmake .. -DBUILD_EXAMPLES=true -DCMAKE_BUILD_TYPE=Release -DFORCE_LIBUVC=true
+make -j1
+sudo make install
+```
+realsense-viewerが起動できる
+
+~~pyrealsenseのmake
+(このときenvをactivateにするとwhich python3がenvの方を指してくれる)~~\
+
+~~`cd ~/librealsense/build`
+cmake .. -DBUILD_PYTHON_BINDINGS=bool:true -DPYTHON_EXECUTABLE=$(which python3)
+make -j1
+sudo make install~~\
+~~`~/.bashrcにexport PYTHONPATH=$PYTHONPATH:/home/pi/NHK2024/NHK2024_R2_Raspi/env/lib/を追加`~~
+~~`source ~/.bashrc`~~
+
+~~openglのインストール(envをactivateにすること)~~
+~~pip install pyopengl
+pip install pyopengl_accelerate~~
+raspi-configでのGL Driverの設定は無かったので飛ばした
+
+~~NHK2024_Camera_Libraryのrs_sample.pyを実行すると
+no module named pyrealsense2のエラーが出る~~
+
+librealsenseのみmakeした状態で
+~/.bashrcにexport PYTHONPATH=$PYTHONPATH:/usr/local/OFFを追加して
+source ~/.bashrcを実行するとpyrealsense2が使えるようになった
