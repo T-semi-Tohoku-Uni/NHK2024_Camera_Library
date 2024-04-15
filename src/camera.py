@@ -36,7 +36,7 @@ def usb_video_device(port : int):
             if(f'usb-0:1.{port}' in line):
                 tmp = line.split('index')[1][0]
                 if int(tmp) % 2 == 0:
-                    video_index = line.split('../../video')[1][0]
+                    video_index = line.split('../../video')[1]
         
         cmd = 'ls -la /dev/v4l/by-id'
         res = subprocess.check_output(cmd.split())
