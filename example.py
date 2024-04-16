@@ -19,10 +19,6 @@ if __name__ == "__main__":
             key = cv2.waitKey(1)
             if key == ord("q"):
                 break
-            elif key == ord("l"):
-                mainprocess.object_detector.current_state = AREA_STATE.AREA_LINE
-            elif key == ord("s"):
-                mainprocess.object_detector.current_state = AREA_STATE.AREA_STORAGE
             
             if id == OUTPUT_ID.BALL:
                 items,x,y,z,is_obtainable = output_data

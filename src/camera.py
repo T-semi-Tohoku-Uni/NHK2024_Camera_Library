@@ -88,11 +88,11 @@ class UpperCamera:
         # 焦点距離
         focal_length = 270
         # ロボットの中心位置を原点とした時のカメラの位置[mm]
-        pos_x = -100
-        pos_y = 400
-        pos_z = 150
+        pos_x = -155
+        pos_y = 430
+        pos_z = 100
         # カメラ座標におけるカメラの傾き[rad]
-        theta_x = 15*np.pi/180
+        theta_x = 10*np.pi/180
         theta_y = 0
         theta_z = 0
         

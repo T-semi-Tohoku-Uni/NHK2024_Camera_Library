@@ -25,10 +25,6 @@ RS_MIN_DISTANCE = 100
 # デプス画像に対して大津の二値化を適用する時のデプスの間隔を表す配列
 DEPTH_BINS=[i for i in range(RS_MIN_DISTANCE,RS_MAX_DISTANCE+RS_MIN_DISTANCE,DISTANCE_INTERVAL)]
 
-# 輝度に対して大津の二値化を適用する時の輝度値の間隔を表す配列
-LUMINANCE_BINS=[i for i in range(0,255,1)]
-
-
 # 籾の半径[mm]
 PADDY_RICE_RADIUS = 100.0
 
@@ -38,8 +34,12 @@ SILO_HEIGHT = 425.0
 # 検出可能最大距離[mm]
 DETECTABLE_MAX_DIS = 10000.0
 
-# 検出した輪郭の最小面積(手前側のカメラ)[pxl]
-MIN_CONTOUR_AREA_THRESHOLD = 2000
+# 検出した輪郭の最小面積(上部のカメラ)[pxl]
+UPPER_MIN_CONTOUR_AREA_THRESHOLD = 200
+
+# 検出した輪郭の最小面積(下部のカメラ)[pxl]
+LOWER_MIN_CONTOUR_AREA_THRESHOLD = 2000
+
 
 # 円形度の閾値
 CIRCULARITY_THRESHOLD=0.5
@@ -57,6 +57,9 @@ LINE_MARGIN = 10
 
 # 縦線、横線の角度の閾値[rad]
 LINE_SLOPE_THRESHOLD = 0.26
+
+# サイロの個数
+NUMBER_OF_SILO = 5
 
 class AREA_STATE(Enum):
     AREA_LINE = 0
@@ -164,9 +167,20 @@ def coordinate_transformation(params,w, h, dis):
     # 水平方向，奥行方向，垂直方向の順に返す
     return int(coordinate[0,0]), int(coordinate[2,0]), int(coordinate[1,0])
 
-# 大津の手法をdepthに適用
 def threshold_otsu(hist, min_value=0, max_value=10):
+    """
+    大津の手法をdepthに適用
 
+    Parameters
+    --------------
+        hist : _description_
+        min_value (int, optional): ヒストグラムの最小値 Defaults to 0.
+        max_value (int, optional): ヒストグラムの最大値 Defaults to 10.
+
+    Returns
+    --------------
+        th : _description_
+    """
     s_max = (0,-10)
 
     for th in range(min_value, max_value):
@@ -190,7 +204,7 @@ def threshold_otsu(hist, min_value=0, max_value=10):
     # クラス間分散が最大のときの閾値を返す
     return s_max[0]
 
-def find_circle_contours(mask_img):
+def find_circle_contours(mask_img, min_contour_area_threshold):
     """
     マスク画像から円の輪郭を探す
     
@@ -198,6 +212,9 @@ def find_circle_contours(mask_img):
     ----------
     mask_img : numpy.array
         マスク処理をした画像
+    
+    min_contour_area_threshold : int
+        輪郭の面積の最小値
     
     Returns
     -------
@@ -209,7 +226,7 @@ def find_circle_contours(mask_img):
     contours, hierarchy = cv2.findContours(mask_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if len(contours) > 0:
         # 小さい輪郭は誤検出として削除
-        contours = list(filter(lambda x: cv2.contourArea(x) > MIN_CONTOUR_AREA_THRESHOLD, contours))
+        contours = list(filter(lambda x: cv2.contourArea(x) > min_contour_area_threshold, contours))
         
         # 最小外接円を求める
         circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>CIRCULARITY_THRESHOLD]
@@ -222,13 +239,13 @@ class DetectObj:
         self.model = YOLO(model_path)
         
         # maskの値を設定する
-        self.blue_lower_mask = np.array([135, 50, 50])
+        self.blue_lower_mask = np.array([135, 20, 20])
         self.blue_upper_mask = np.array([160, 255, 255])
-        self.purple_lower_mask = np.array([165,50,50])
+        self.purple_lower_mask = np.array([165,20,20])
         self.purple_upper_mask = np.array([230,255,255])
-        self.red_lower_mask_1 = np.array([0,50,50])
+        self.red_lower_mask_1 = np.array([0,20,20])
         self.red_upper_mask_1 = np.array([10,255,255])
-        self.red_lower_mask_2 = np.array([230,50,50])
+        self.red_lower_mask_2 = np.array([230,20,20])
         self.red_upper_mask_2 = np.array([255,255,255])
         
         # fast line detector
@@ -260,132 +277,137 @@ class DetectObj:
             except KeyboardInterrupt:
                 break
     
-    # ボール検出（閾値）とライン検出をself.current_stateで切り替える
-    def detecting_ball_or_line(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
+    # ライン検出を行う
+    def detecting_line(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
         while True:
             try:
-                if self.current_state == AREA_STATE.AREA_LINE:
-                    # 奥行方向のラインがあるかどうか：bool
-                    forward = False
-                    # 右方向のラインがあるかどうか：bool
-                    right = False
-                    # 左方向のラインがあるかどうか：bool
-                    left = False
-                    # 奥行方向のラインの、水平方向のずれを出力(ロボットの中心から前方向300mmくらい)
-                    diff_x = 0.0
+                # 奥行方向のラインがあるかどうか：bool
+                forward = False
+                # 右方向のラインがあるかどうか：bool
+                right = False
+                # 左方向のラインがあるかどうか：bool
+                left = False
+                # 奥行方向のラインの、水平方向のずれを出力(ロボットの中心から前方向300mmくらい)
+                diff_x = 0.0
+                
+                # カメラから画像を読み込む
+                frame = q_lcam.get()
+                
+                # BGRのBを抽出
+                binary = frame[:,:,0]
+                
+                # 出力画像にガウシアンフィルタを適用する。
+                blur = cv2.GaussianBlur(binary, ksize=(7,7),sigmaX=0)
+                
+                # ライン検出
+                lines = self.fld.detect(blur)
+
+                # image for debug
+                all_lines = self.fld.drawSegments(frame,lines)
+                filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
+                if lines is not None:
+                    # 画像の右端に点がある線分のリスト
+                    right_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
+                    # 横線かどうかの判定
+                    right_list = [line for line in right_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    right_list = [line.astype(int) for line in right_list]
+                    [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in right_list]
+                    right = True if len(right_list)>=2 else False
+
+                    # 画像の左端に点がある線分のリスト
+                    left_list = [line for line in lines if line[0][0]>FRAME_WIDTH-LINE_MARGIN or line[0][2]>FRAME_WIDTH-LINE_MARGIN]
+                    # 横線かどうかの判定
+                    left_list = [line for line in left_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    left_list = [line.astype(int) for line in left_list]
+                    [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in left_list]
+                    left = True if len(left_list)>=2 else False
+
+                    # 画像の下端に点がある線分のリスト
+                    # forward_list = [line for line in lines if line[0][1]>FRAME_HEIGHT-LINE_MARGIN or line[0][3]>FRAME_HEIGHT-LINE_MARGIN]
+                    # 縦線かどうかの判定
+                    forward_list = [line for line in forward_list if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    forward_list = [line.astype(int) for line in forward_list]
+                    [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
+                    forward = True if len(forward_list)>=2 else False
+
+                    # 縦線の下の点に対応するxの値とFRAME_WIDTH/2の差をとったリスト
+                    forward_x_list = [abs(p[0][0]-FRAME_WIDTH/2) if p[0][1]>p[0][3] else abs(p[0][2]-FRAME_WIDTH/2) for p in forward_list]
+                    forward_x_list.sort()
+                    if len(forward_x_list)>=2:
+                        # 画像の中心に近い2本の線分のx座標の平均
+                        diff_x = (forward_x_list[0]+forward_x_list[1])/2
+
+                show_frame = np.vstack((all_lines,filtered_frame))
+
+                x,y,z = coordinate_transformation(lcam_params,diff_x,FRAME_HEIGHT-LINE_MARGIN,LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
+                
+                output_data = (forward, right, left, x)
+                # キューに結果を入れる
+                q_out.put((show_frame, OUTPUT_ID.LINE, output_data))
+            
+            except KeyboardInterrupt:
+                break
+                
+    # ボール検出（閾値によるマスキング）を行う
+    def detecting_ball(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
+        while True:
+            try:
+                ucam_frame = q_ucam.get()
+                lcam_frame = q_lcam.get()
+
+                # 出力画像にガウシアンフィルタを適用する。
+                ucam_frame = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
+                lcam_frame = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
+
+                # カメラ画像をHSVに変換
+                ucam_hsv = cv2.cvtColor(ucam_frame, cv2.COLOR_BGR2HSV_FULL)
+                lcam_hsv = cv2.cvtColor(lcam_frame, cv2.COLOR_BGR2HSV_FULL)
+
+                # 閾値でmasking処理
+                ucam_mask = cv2.inRange(ucam_hsv,self.blue_lower_mask,self.blue_upper_mask)
+                lcam_mask = cv2.inRange(lcam_hsv,self.blue_lower_mask,self.blue_upper_mask)
+                
+                items = 0
+                paddy_rice_x = 0
+                paddy_rice_y = 0
+                paddy_rice_z = DETECTABLE_MAX_DIS
+                is_obtainable = False
+                
+                # 下部カメラで円を検出する
+                circles = find_circle_contours(lcam_mask,LOWER_MIN_CONTOUR_AREA_THRESHOLD)
+                # もし下部カメラで円が検出されたら
+                if len(circles) > 0:
+                    # デバッグ用に円を描画
+                    [cv2.circle(lcam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
+                    items = len(circles)
+                    target = circles.index(max(circles, key=lambda x:x[1]))
+                    (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(lcam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+                # もし下部カメラで円が検出されなければ
+                else:
+                    # 上部カメラで円を検出する
+                    circles = find_circle_contours(ucam_mask,UPPER_MIN_CONTOUR_AREA_THRESHOLD)
                     
-                    # カメラから画像を読み込む
-                    frame = q_lcam.get()
+                    # 上部カメラはカメラ画像の下半分だけ見る
+                    circles = [[(c[0][0],c[0][1]), c[1]] for c in circles if c[0][1] > FRAME_HEIGHT/2]
                     
-                    # BGRのBを抽出
-                    binary = frame[:,:,0]
-                    
-                    # 出力画像にガウシアンフィルタを適用する。
-                    blur = cv2.GaussianBlur(binary, ksize=(7,7),sigmaX=0)
-                    
-                    # ライン検出
-                    lines = self.fld.detect(blur)
-
-                    # image for debug
-                    all_lines = self.fld.drawSegments(frame,lines)
-                    right_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                    left_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                    forward_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-
-                    if lines is not None:
-                        # 画像の右端に点がある線分のリスト
-                        right_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
-                        # 横線かどうかの判定
-                        right_list = [line for line in right_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
-                        right_list = [line.astype(int) for line in right_list]
-                        [cv2.line(right_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in right_list]
-                        right = True if len(right_list)>=2 else False
-
-                        # 画像の左端に点がある線分のリスト
-                        left_list = [line for line in lines if line[0][0]>FRAME_WIDTH-LINE_MARGIN or line[0][2]>FRAME_WIDTH-LINE_MARGIN]
-                        # 横線かどうかの判定
-                        left_list = [line for line in left_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
-                        left_list = [line.astype(int) for line in left_list]
-                        [cv2.line(left_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in left_list]
-                        left = True if len(left_list)>=2 else False
-
-                        # 画像の下端に点がある線分のリスト
-                        forward_list = [line for line in lines if line[0][1]>FRAME_HEIGHT-LINE_MARGIN or line[0][3]>FRAME_HEIGHT-LINE_MARGIN]
-                        # 縦線かどうかの判定
-                        forward_list = [line for line in forward_list if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
-                        forward_list = [line.astype(int) for line in forward_list]
-                        [cv2.line(forward_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
-                        forward = True if len(forward_list)>=2 else False
-
-                        # 縦線の下の点に対応するxの値とFRAME_WIDTH/2の差をとったリスト
-                        forward_x_list = [abs(p[0][0]-FRAME_WIDTH/2) if p[0][1]>p[0][3] else abs(p[0][2]-FRAME_WIDTH/2) for p in forward_list]
-                        forward_x_list.sort()
-                        if len(forward_x_list)>=2:
-                            # 画像の中心に近い2本の線分のx座標の平均
-                            diff_x = (forward_x_list[0]+forward_x_list[1])/2
-
-                    show_frame = np.vstack((all_lines,right_frame,left_frame,forward_frame))
-
-                    x,y,z = coordinate_transformation(lcam_params,diff_x,FRAME_HEIGHT-LINE_MARGIN,LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
-                    
-                    output_data = (forward, right, left, x)
-                    # キューに結果を入れる
-                    q_out.put((show_frame, OUTPUT_ID.LINE, output_data))
-                    
-                    
-                elif self.current_state == AREA_STATE.AREA_STORAGE:
-                    ucam_frame = q_ucam.get()
-                    lcam_frame = q_lcam.get()
-
-                    # 出力画像にガウシアンフィルタを適用する。
-                    ucam_frame = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
-                    lcam_frame = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
-
-                    # カメラ画像をHSVに変換
-                    ucam_hsv = cv2.cvtColor(ucam_frame, cv2.COLOR_BGR2HSV_FULL)
-                    lcam_hsv = cv2.cvtColor(lcam_frame, cv2.COLOR_BGR2HSV_FULL)
-
-                    # 閾値でmasking処理
-                    ucam_mask = cv2.inRange(ucam_hsv,self.blue_lower_mask,self.blue_upper_mask)
-                    lcam_mask = cv2.inRange(lcam_hsv,self.blue_lower_mask,self.blue_upper_mask)
-                    
-                    items = 0
-                    paddy_rice_x = 0
-                    paddy_rice_y = 0
-                    paddy_rice_z = DETECTABLE_MAX_DIS
-                    is_obtainable = False
-                    
-                    # 下部カメラで円を検出する
-                    circles = find_circle_contours(lcam_mask)
-                    # もし下部カメラで円が検出されたら
+                    # もし上部カメラで円が検出されたら
                     if len(circles) > 0:
                         # デバッグ用に円を描画
-                        [cv2.circle(lcam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
+                        [cv2.circle(ucam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(lcam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-                    # もし下部カメラで円が検出されなければ
-                    else:
-                        # 上部カメラで円を検出する
-                        circles = find_circle_contours(ucam_mask)
-                        # もし上部カメラで円が検出されたら
-                        if len(circles) > 0:
-                            # デバッグ用に円を描画
-                            [cv2.circle(ucam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
-                            items = len(circles)
-                            target = circles.index(max(circles, key=lambda x:x[1]))
-                            (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
-                            is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
 
-                    # 画像のタイプを揃える
-                    ucam_mask = cv2.cvtColor(ucam_mask,cv2.COLOR_GRAY2BGR)
-                    lcam_mask = cv2.cvtColor(lcam_mask,cv2.COLOR_GRAY2BGR)
-                    show_frame = np.hstack((ucam_frame,ucam_mask,lcam_frame,lcam_mask))
-                    
-                    # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-                    output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                    q_out.put((show_frame, OUTPUT_ID.BALL, output_data))
+                # 画像のタイプを揃える
+                ucam_mask = cv2.cvtColor(ucam_mask,cv2.COLOR_GRAY2BGR)
+                lcam_mask = cv2.cvtColor(lcam_mask,cv2.COLOR_GRAY2BGR)
+                show_frame = np.vstack((np.hstack((ucam_frame,ucam_mask)),np.hstack((lcam_frame,lcam_mask))))
+                
+                # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+                output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+                q_out.put((show_frame, OUTPUT_ID.BALL, output_data))
                 
             except KeyboardInterrupt:
                 break
@@ -416,7 +438,7 @@ class DetectObj:
                         try:
                             ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2]],axis=0)
                         except Exception as err:
-                            print(f"Unexpected {err=}, {type(err)=}")
+                            print(f"This is inference_for_silo function in DetectObj class\nUnexpected {err=}, {type(err)=}")
                 
                 for box, cls in zip(boxes, classes):
                     name = names[int(cls)]

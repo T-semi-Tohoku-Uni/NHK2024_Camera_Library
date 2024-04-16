@@ -10,13 +10,14 @@ class MainProcess:
         self.ucam = UpperCamera()
         self.lcam = LowerCamera(0)
         self.rcam = RearCamera()
-        self.object_detector = DetectObj(model_path)
+        self.detector = DetectObj(model_path)
 
-        self.thread_upper_capturing = threading.Thread()
-        self.thread_lower_capturing = threading.Thread()
-        self.thread_front_detecting = threading.Thread()
-        self.thread_rear_capturing = threading.Thread()
-        self.thread_rear_detecting = threading.Thread()
+        self.thread_upper_capture = threading.Thread()
+        self.thread_lower_capture = threading.Thread()
+        self.thread_rear_capture = threading.Thread()
+        self.thread_line_detector = threading.Thread()
+        self.thread_ball_detector = threading.Thread()
+        self.thread_silo_detector = threading.Thread()
         
         # キューの辞書の宣言(上部カメラ画像のキュー，下部カメラ画像のキュー，Realsense画像のキュー，ロボット前の処理した画像のキュー，ロボット後ろの処理した画像のキュー)
         self.q_upper_in = queue.Queue(maxsize=1)
@@ -26,17 +27,21 @@ class MainProcess:
 
     # カメラからの画像取得と画像処理、推論(デプス無し)をスレッドごとに分けて実行      
     def thread_start(self):
-        self.thread_upper_capturing = threading.Thread(target=self.object_detector.capturing, args=(self.q_upper_in,self.ucam), daemon=True)
-        self.thread_lower_capturing = threading.Thread(target=self.object_detector.capturing, args=(self.q_lower_in,self.lcam), daemon=True)
-        self.thread_front_detecting = threading.Thread(target=self.object_detector.detecting_ball_or_line, args=(self.ucam.params,self.lcam.params,self.rcam.params,self.q_upper_in,self.q_lower_in,self.q_rear_in,self.q_out),daemon=True)
-        self.thread_rear_capturing = threading.Thread(target=self.object_detector.capturing, args=(self.q_rear_in,self.rcam),daemon=True)
-        self.thread_rear_detecting = threading.Thread(target=self.object_detector.inference_for_silo, args=(self.ucam.params,self.lcam.params,self.rcam.params,self.q_upper_in,self.q_lower_in,self.q_rear_in,self.q_out),daemon=True)
+        self.thread_upper_capture = threading.Thread(target=self.detector.capturing, args=(self.q_upper_in,self.ucam), daemon=True)
+        self.thread_lower_capture = threading.Thread(target=self.detector.capturing, args=(self.q_lower_in,self.lcam), daemon=True)
+        self.thread_rear_capture = threading.Thread(target=self.detector.capturing, args=(self.q_rear_in,self.rcam),daemon=True)
+        self.thread_line_detector = threading.Thread(target=self.detector.detecting_line, args=(self.ucam.params,self.lcam.params,self.rcam.params,self.q_upper_in,self.q_lower_in,self.q_rear_in,self.q_out),daemon=True)
+        self.thread_ball_detector = threading.Thread(target=self.detector.detecting_ball, args=(self.ucam.params,self.lcam.params,self.rcam.params,self.q_upper_in,self.q_lower_in,self.q_rear_in,self.q_out),daemon=True)
+        self.thread_silo_detector = threading.Thread(target=self.detector.inference_for_silo, args=(self.ucam.params,self.lcam.params,self.rcam.params,self.q_upper_in,self.q_lower_in,self.q_rear_in,self.q_out),daemon=True)
+
+        self.thread_upper_capture.start()
+        self.thread_lower_capture.start()
+        self.thread_rear_capture.start()
+        self.thread_line_detector.start()
+        self.thread_ball_detector.start()
+        self.thread_silo_detector.start()
         
-        self.thread_upper_capturing.start()
-        self.thread_lower_capturing.start()
-        self.thread_front_detecting.start()
-        self.thread_rear_capturing.start()
-        self.thread_rear_detecting.start()
+        
 
     # キューを空にする
     def terminate_queue(self):
