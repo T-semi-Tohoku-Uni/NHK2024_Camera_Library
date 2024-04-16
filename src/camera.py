@@ -139,8 +139,7 @@ class LowerCamera:
         else:
             device_id = usb_video_device(PORT_ID.USB2_LOWER.value)
         # Camera Settings
-        #self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
-        self.cap = cv2.VideoCapture(device_id)
+        self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
         self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
@@ -190,6 +189,7 @@ class RearCamera:
     def __init__(self):
         connected_devices = rs.context().query_devices()
         serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in connected_devices]
+        print(f"{serial_number_list=}")
         if REAR_REALSENSE_SERIAL_NUMBER in serial_number_list:
             # Configure depth and color streams
             self.pipeline = rs.pipeline()
