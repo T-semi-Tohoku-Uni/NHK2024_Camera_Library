@@ -124,7 +124,7 @@ def calc_distance(pxl_size :float, real_size :float) -> float:
         dis = DETECTABLE_MAX_DIS
     return dis
 
-def coordinate_transformation(params,w, h, dis):
+def image_to_robot_coordinate_transformation(params,w, h, dis):
     """
     画像座標（ピクセル値）からロボット座標（mm）へ変換する:
     
@@ -301,6 +301,20 @@ class DetectObj:
                 filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
                 
                 if lines is not None:
+                    # 縦線かどうかの判定
+                    forward_list = [line for line in lines if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    forward_list = [line.astype(int) for line in forward_list]
+                    [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
+                    forward = True if len(forward_list)>=2 else False
+                    
+                    
+                    # 縦線の下の点に対応するxの値をロボット座標に変換したリスト
+                    forward_x_list = [image_to_robot_coordinate_transformation(lcam_params,p[0][0],p[0][1],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)[0] if p[0][1]>p[0][3] else image_to_robot_coordinate_transformation(lcam_params,p[0][2],p[0][3],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)[0] for p in forward_list]
+                    forward_x_list.sort()
+                    if len(forward_x_list)>=2:
+                        # 画像の中心に近い2本の線分のx座標の平均
+                        diff_x = (forward_x_list[0]+forward_x_list[1])/2
+                        
                     # 画像の右端に点がある線分のリスト
                     right_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
                     # 横線かどうかの判定
@@ -317,20 +331,7 @@ class DetectObj:
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in left_list]
                     left = True if len(left_list)>=2 else False
 
-                    # 縦線かどうかの判定
-                    forward_list = [line for line in lines if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
-                    forward_list = [line.astype(int) for line in forward_list]
-                    [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
-                    forward = True if len(forward_list)>=2 else False
-
-                    # 縦線の下の点に対応するxの値とFRAME_WIDTH/2の差をとったリスト
-                    forward_x_list = [abs(p[0][0]-FRAME_WIDTH/2) if p[0][1]>p[0][3] else abs(p[0][2]-FRAME_WIDTH/2) for p in forward_list]
-                    forward_x_list.sort()
-                    if len(forward_x_list)>=2:
-                        # 画像の中心に近い2本の線分のx座標の平均
-                        diff_x = (forward_x_list[0]+forward_x_list[1])/2
-
-                x,y,z = coordinate_transformation(lcam_params,diff_x,FRAME_HEIGHT-LINE_MARGIN,LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
+                x,y,z = image_to_robot_coordinate_transformation(lcam_params,diff_x,FRAME_HEIGHT-LINE_MARGIN,LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
                 line_show_frame = np.hstack((all_lines,filtered_frame))
                 # キューに結果を入れる
                 output_data = (forward, right, left, x)
@@ -368,7 +369,7 @@ class DetectObj:
                     # 返り値の更新
                     items = len(circles)
                     target = circles.index(max(circles, key=lambda x:x[1]))
-                    (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(lcam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                    (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
                     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                 # もし下部カメラで円が検出されなければ
                 else:
@@ -385,7 +386,7 @@ class DetectObj:
                         # 返り値の更新
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                         
                 # 画像のタイプを揃える
@@ -442,7 +443,7 @@ class DetectObj:
                         w = (x1+x2)/2
                         h = (y1+y2)/2
                         dis = calc_distance(abs(y1-y2),SILO_HEIGHT)
-                        (target_silo_x,target_silo_y,target_silo_z) = coordinate_transformation(rcam_params,w,h,dis)
+                        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(rcam_params,w,h,dis)
                         maximum_my_ball_in_silo_count = my_ball_in_silo_counter
                 
                 # キューに送信
