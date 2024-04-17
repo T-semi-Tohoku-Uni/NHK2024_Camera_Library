@@ -50,13 +50,13 @@ OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 80
 
 # カメラからラインの検出点までの距離[mm]
-LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 450
+LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 575
 
 # 画像端から何ピクセル分の点までを、画像端から伸びてる線分とみなすか
 LINE_MARGIN = 30
 
 # 縦線、横線の角度の閾値[rad]
-LINE_SLOPE_THRESHOLD = 0.26
+LINE_SLOPE_THRESHOLD = 0.52
 
 # サイロの個数
 NUMBER_OF_SILO = 5
@@ -65,6 +65,11 @@ class OUTPUT_ID(Enum):
     BALL = 0
     SILO = 1
     LINE = 2
+    
+class LINE_TYPE(Enum):
+    FORWARD = 0
+    RIGHT = 1
+    LEFT = 2
 
 def calc_circularity(cnt :np.ndarray) -> float:
     '''
@@ -228,6 +233,35 @@ def find_circle_contours(mask_img, min_contour_area_threshold):
         circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>CIRCULARITY_THRESHOLD]
     return circles
 
+def detect_horizon_vertical(original_line_list, line_type):
+    """
+    縦のラインもしくは横のラインを検出する
+    
+    Parameters
+    ----------
+    original_line_list : list
+        元のライン情報のリスト
+    line_type : Enum
+        ラインの種類（縦，右，左）
+        
+    Returns
+    -------
+    filtered_line_list : list
+        縦若しくは横のラインのリスト
+    
+    """
+    filtered_line_list = []
+    
+    if line_type == LINE_TYPE.FORWARD:
+        filtered_line_list = [line for line in original_line_list if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+        filtered_line_list = [line.astype(int) for line in filtered_line_list]
+        
+    elif line_type == LINE_TYPE.RIGHT or LINE_TYPE.LEFT:
+        filtered_line_list = [line for line in original_line_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+        filtered_line_list = [line.astype(int) for line in filtered_line_list]
+        
+    return filtered_line_list
+
 class DetectObj:
     def __init__(self,model_path):
         # YOLOv8 modelのロード
@@ -245,7 +279,7 @@ class DetectObj:
         self.red_upper_mask_2 = np.array([255,255,255])
         
         # fast line detector
-        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=10,distance_threshold=1.41421356,canny_th1=200.0,canny_th2=50.0,canny_aperture_size=3,do_merge=False)
+        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=10,distance_threshold=1.41421356,canny_th1=200.0,canny_th2=50.0,canny_aperture_size=3,do_merge=True)
      
     # 画像を取得してキューに入れる
     def capturing(self, q_frames, cap):
@@ -288,10 +322,10 @@ class DetectObj:
                 diff_x = 0.0
                 
                 # BGRのBを抽出
-                binary = lcam_frame[:,:,0]
+                blue = lcam_frame[:,:,0]
                 
                 # 出力画像にガウシアンフィルタを適用する。
-                blur = cv2.GaussianBlur(binary, ksize=(7,7),sigmaX=0)
+                blur = cv2.GaussianBlur(blue, ksize=(7,7),sigmaX=0)
                 
                 # ライン検出
                 lines = self.fld.detect(blur)
@@ -301,10 +335,8 @@ class DetectObj:
                 filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
                 
                 if lines is not None:
-                    # 画像の下端に点がある線分のリスト
-                    forward_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
                     # 縦線かどうかの判定
-                    forward_list = [line for line in forward_list if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    forward_list = [line for line in lines if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
                     forward_list = [line.astype(int) for line in forward_list]
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
                     forward = True if len(forward_list)>=2 else False
