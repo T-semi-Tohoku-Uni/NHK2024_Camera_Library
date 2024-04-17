@@ -1,9 +1,8 @@
 import numpy as np
 import cv2
-from src import MainProcess,OUTPUT_ID,AREA_STATE
+from src import MainProcess,OUTPUT_ID
 
 if __name__ == "__main__":
-    #ncnn_model_path = 'models/20240109best_ncnn_model'
     model_path = 'models/20240109best.pt'
     
     # メインプロセスを実行するクラス
@@ -15,13 +14,7 @@ if __name__ == "__main__":
     while True:
         try:
             _, id, output_data = mainprocess.q_out.get()
-            key = cv2.waitKey(1)
-            if key == ord("q"):
-                break
-            elif key == ord("l"):
-                mainprocess.object_detector.current_state = AREA_STATE.AREA_LINE
-            elif key == ord("s"):
-                mainprocess.object_detector.current_state = AREA_STATE.AREA_STORAGE
+
             
             if id == OUTPUT_ID.BALL:
                 items,x,y,z,is_obtainable = output_data
