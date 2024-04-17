@@ -57,7 +57,7 @@ class UpperCamera:
         connected_devices = rs.context().query_devices()
         serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in connected_devices]
         print(f"{serial_number_list=}")
-        if FRONT_UPPER_REALSENSE_SERIAL_NUMBER in serial_number_list:
+        try:
             # Configure depth and color streams
             self.pipeline = rs.pipeline()
             config = rs.config()
@@ -83,7 +83,8 @@ class UpperCamera:
             rgb_camera_sensor.set_option(rs.option.white_balance, WB)
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
         
-        else:
+        except Exception as e:
+            print(e)
             print(f"realsense{FRONT_UPPER_REALSENSE_SERIAL_NUMBER} not connected")
         
         # 複数のRealsenseのパイプラインを開く時間に間隔を設けることでRuntimeErrorの解消を図る
@@ -191,10 +192,7 @@ class LowerCamera:
 
 class RearCamera:
     def __init__(self):
-        connected_devices = rs.context().query_devices()
-        serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in connected_devices]
-        print(f"{serial_number_list=}")
-        if REAR_REALSENSE_SERIAL_NUMBER in serial_number_list:
+        try:
             # Configure depth and color streams
             self.pipeline = rs.pipeline()
             config = rs.config()
@@ -219,7 +217,8 @@ class RearCamera:
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
             rgb_camera_sensor.set_option(rs.option.white_balance, WB)
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
-        else:
+        except Exception as e:
+            print(e)
             print(f"realsense{REAR_REALSENSE_SERIAL_NUMBER} not connected")
         
         # 複数のRealsenseのパイプラインを開く時間に間隔を設けることでRuntimeErrorの解消を図る
