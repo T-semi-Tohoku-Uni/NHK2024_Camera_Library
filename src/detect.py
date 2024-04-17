@@ -53,17 +53,13 @@ OBTAINABE_AREA_RADIUS = 80
 LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 450
 
 # 画像端から何ピクセル分の点までを、画像端から伸びてる線分とみなすか
-LINE_MARGIN = 10
+LINE_MARGIN = 30
 
 # 縦線、横線の角度の閾値[rad]
 LINE_SLOPE_THRESHOLD = 0.26
 
 # サイロの個数
 NUMBER_OF_SILO = 5
-
-class AREA_STATE(Enum):
-    AREA_LINE = 0
-    AREA_STORAGE= 1
     
 class OUTPUT_ID(Enum):
     BALL = 0
@@ -250,9 +246,6 @@ class DetectObj:
         
         # fast line detector
         self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=10,distance_threshold=1.41421356,canny_th1=200.0,canny_th2=50.0,canny_aperture_size=3,do_merge=False)
-        
-        # 前方のライン検出とボール検出の切り替えのために現在いるエリアを保持
-        self.current_state = AREA_STATE.AREA_LINE
      
     # 画像を取得してキューに入れる
     def capturing(self, q_frames, cap):
@@ -276,11 +269,15 @@ class DetectObj:
                 q_frames.put((color, depth))
             except KeyboardInterrupt:
                 break
-    
-    # ライン検出を行う
-    def detecting_line(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
+                
+    # 前方カメラでライン検出，ボール検出（閾値によるマスキング）を行う
+    def detecting_front(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
         while True:
             try:
+                # 下部カメラから画像を読み込む
+                lcam_frame = q_lcam.get()
+                
+                ###ライン検出ここから###
                 # 奥行方向のラインがあるかどうか：bool
                 forward = False
                 # 右方向のラインがあるかどうか：bool
@@ -290,11 +287,8 @@ class DetectObj:
                 # 奥行方向のラインの、水平方向のずれを出力(ロボットの中心から前方向300mmくらい)
                 diff_x = 0.0
                 
-                # カメラから画像を読み込む
-                frame = q_lcam.get()
-                
                 # BGRのBを抽出
-                binary = frame[:,:,0]
+                binary = lcam_frame[:,:,0]
                 
                 # 出力画像にガウシアンフィルタを適用する。
                 blur = cv2.GaussianBlur(binary, ksize=(7,7),sigmaX=0)
@@ -303,8 +297,9 @@ class DetectObj:
                 lines = self.fld.detect(blur)
 
                 # image for debug
-                all_lines = self.fld.drawSegments(frame,lines)
+                all_lines = self.fld.drawSegments(lcam_frame,lines)
                 filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
+                
                 if lines is not None:
                     # 画像の右端に点がある線分のリスト
                     right_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
@@ -322,10 +317,8 @@ class DetectObj:
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in left_list]
                     left = True if len(left_list)>=2 else False
 
-                    # 画像の下端に点がある線分のリスト
-                    # forward_list = [line for line in lines if line[0][1]>FRAME_HEIGHT-LINE_MARGIN or line[0][3]>FRAME_HEIGHT-LINE_MARGIN]
                     # 縦線かどうかの判定
-                    forward_list = [line for line in forward_list if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    forward_list = [line for line in lines if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
                     forward_list = [line.astype(int) for line in forward_list]
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
                     forward = True if len(forward_list)>=2 else False
@@ -337,24 +330,23 @@ class DetectObj:
                         # 画像の中心に近い2本の線分のx座標の平均
                         diff_x = (forward_x_list[0]+forward_x_list[1])/2
 
-                show_frame = np.vstack((all_lines,filtered_frame))
-
                 x,y,z = coordinate_transformation(lcam_params,diff_x,FRAME_HEIGHT-LINE_MARGIN,LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
-                
-                output_data = (forward, right, left, x)
+                line_show_frame = np.hstack((all_lines,filtered_frame))
                 # キューに結果を入れる
-                q_out.put((show_frame, OUTPUT_ID.LINE, output_data))
-            
-            except KeyboardInterrupt:
-                break
+                output_data = (forward, right, left, x)
+                q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
+                ###ライン検出ここまで###
                 
-    # ボール検出（閾値によるマスキング）を行う
-    def detecting_ball(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
-        while True:
-            try:
+                ###ボール検出ここから###
+                # 上部カメラから画像を読み込む
                 ucam_frame = q_ucam.get()
-                lcam_frame = q_lcam.get()
-
+                
+                items = 0
+                paddy_rice_x = 0
+                paddy_rice_y = 0
+                paddy_rice_z = DETECTABLE_MAX_DIS
+                is_obtainable = False
+                
                 # 出力画像にガウシアンフィルタを適用する。
                 ucam_frame = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
                 lcam_frame = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
@@ -367,18 +359,13 @@ class DetectObj:
                 ucam_mask = cv2.inRange(ucam_hsv,self.blue_lower_mask,self.blue_upper_mask)
                 lcam_mask = cv2.inRange(lcam_hsv,self.blue_lower_mask,self.blue_upper_mask)
                 
-                items = 0
-                paddy_rice_x = 0
-                paddy_rice_y = 0
-                paddy_rice_z = DETECTABLE_MAX_DIS
-                is_obtainable = False
-                
                 # 下部カメラで円を検出する
                 circles = find_circle_contours(lcam_mask,LOWER_MIN_CONTOUR_AREA_THRESHOLD)
                 # もし下部カメラで円が検出されたら
                 if len(circles) > 0:
                     # デバッグ用に円を描画
                     [cv2.circle(lcam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
+                    # 返り値の更新
                     items = len(circles)
                     target = circles.index(max(circles, key=lambda x:x[1]))
                     (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(lcam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
@@ -395,25 +382,26 @@ class DetectObj:
                     if len(circles) > 0:
                         # デバッグ用に円を描画
                         [cv2.circle(ucam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
+                        # 返り値の更新
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
                         (paddy_rice_x,paddy_rice_y,paddy_rice_z) = coordinate_transformation(ucam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-
+                        
                 # 画像のタイプを揃える
                 ucam_mask = cv2.cvtColor(ucam_mask,cv2.COLOR_GRAY2BGR)
                 lcam_mask = cv2.cvtColor(lcam_mask,cv2.COLOR_GRAY2BGR)
-                show_frame = np.vstack((np.hstack((ucam_frame,ucam_mask)),np.hstack((lcam_frame,lcam_mask))))
+                ball_show_frame = np.vstack((np.hstack((ucam_frame,ucam_mask)),np.hstack((lcam_frame,lcam_mask))))
                 
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_out.put((show_frame, OUTPUT_ID.BALL, output_data))
-                
+                q_out.put((ball_show_frame, OUTPUT_ID.BALL, output_data))
+                ###ボール検出ここまで###
             except KeyboardInterrupt:
                 break
             
-    # サイロの中の自分の籾の数を推論から求めてキューに入れる
-    def inference_for_silo(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
+    # 後方カメラでサイロを監視
+    def detecting_rear(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
         while True:
             try:
                 frame = q_rcam.get()

@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-from src import MainProcess,OUTPUT_ID,AREA_STATE
+from src import MainProcess,OUTPUT_ID
 
 if __name__ == "__main__":
     #ncnn_model_path = 'models/20240109best_ncnn_model'

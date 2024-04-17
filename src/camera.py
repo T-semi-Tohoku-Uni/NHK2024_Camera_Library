@@ -82,8 +82,12 @@ class UpperCamera:
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
             rgb_camera_sensor.set_option(rs.option.white_balance, WB)
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
+        
         else:
             print(f"realsense{FRONT_UPPER_REALSENSE_SERIAL_NUMBER} not connected")
+        
+        # 複数のRealsenseのパイプラインを開く時間に間隔を設けることでRuntimeErrorの解消を図る
+        time.sleep(1)
         
         # 焦点距離
         focal_length = 270
@@ -217,6 +221,9 @@ class RearCamera:
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
         else:
             print(f"realsense{REAR_REALSENSE_SERIAL_NUMBER} not connected")
+        
+        # 複数のRealsenseのパイプラインを開く時間に間隔を設けることでRuntimeErrorの解消を図る
+        time.sleep(1)
         
         # 焦点距離
         focal_length = 270
