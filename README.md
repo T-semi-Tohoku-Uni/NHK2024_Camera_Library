@@ -12,7 +12,14 @@ R2のラズパイで用いるカメラ関係のライブラリ
 
 # 使い方
 インポート\
-`from NHK2024_Camera_Library import MainProcess, OUTPUT_ID`
+MainProcess:スレッドを実行しているクラス class
+OUTPUT_ID:出力の種類 Enum
+LINE_SLOPE_THRESHOLD:ライン検出の角度の閾値[rad] float
+OBTAINABE_AREA_CENTER_X:ロボット座標における,ファンで吸い込めるエリアの中心のx座標[mm] int
+OBTAINABE_AREA_CENTER_Y:ロボット座標における,ファンで吸い込めるエリアの中心のy座標[mm] int
+```
+from NHK2024_Camera_Library import MainProcess, OUTPUT_ID, LINE_SLOPE_THRESHOLD, OBTAINABE_AREA_CENTER_X, OBTAINABE_AREA_CENTER_Y
+```
 
 ループの前に実行すべきもの\
 ```
@@ -31,7 +38,6 @@ mainprocess.thread_start()
 frame:画像（デバッグ用なのでラズパイで動かすときはアンダースコアで受け取らない）\
 id:OUTPUT_ID(列挙型)　どの出力形式なのかを表す\
 output_data:タプル　出力データ　idによって中身が異なる\
-
 ```
 # 出力を受け取る
 frame, id, output_data = mainprocess.q_out.get()
@@ -47,6 +53,7 @@ z:目標のボールまでのz座標[mm] float\
 if id == OUTPUT_ID.BALL:
     items,x,y,z,is_obtainable = output_data
 ```
+
 サイロの検出\
 x:目標のサイロまでのx座標[mm] float\
 y:目標のサイロまでのy座標[mm] float\
@@ -61,8 +68,10 @@ forward:奥行方向のラインが伸びているかどうか bool\
 right:右方向のラインが伸びているかどうか bool\
 left:左方向のラインが伸びているかどうか bool\
 x:ラインがロボットの中心からどれだけずれているか[mm] float\
-`if id == OUTPUT_ID.LINE:`
-`    forward, right, left, x = output_data`
+```
+if id == OUTPUT_ID.LINE:
+    forward, right, left, x = output_data
+```
 
 # ncnnモデルを使用するためのaptパッケージ
 https://github.com/Tencent/ncnn/wiki/how-to-build#build-for-linux
