@@ -301,12 +301,13 @@ class DetectObj:
                 filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
                 
                 if lines is not None:
+                    # 画像の下端に点がある線分のリスト
+                    forward_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
                     # 縦線かどうかの判定
-                    forward_list = [line for line in lines if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+                    forward_list = [line for line in forward_list if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
                     forward_list = [line.astype(int) for line in forward_list]
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
                     forward = True if len(forward_list)>=2 else False
-                    
                     
                     # 縦線の下の点に対応するxの値をロボット座標に変換したリスト
                     forward_x_list = [image_to_robot_coordinate_transformation(lcam_params,p[0][0],p[0][1],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)[0] if p[0][1]>p[0][3] else image_to_robot_coordinate_transformation(lcam_params,p[0][2],p[0][3],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)[0] for p in forward_list]
@@ -331,10 +332,9 @@ class DetectObj:
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in left_list]
                     left = True if len(left_list)>=2 else False
 
-                x,y,z = image_to_robot_coordinate_transformation(lcam_params,diff_x,FRAME_HEIGHT-LINE_MARGIN,LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
                 line_show_frame = np.hstack((all_lines,filtered_frame))
                 # キューに結果を入れる
-                output_data = (forward, right, left, x)
+                output_data = (forward, right, left, diff_x)
                 q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
                 ###ライン検出ここまで###
                 
