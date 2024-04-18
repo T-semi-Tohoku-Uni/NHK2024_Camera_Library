@@ -13,9 +13,15 @@ FRAME_HEIGHT = 240
 FPS = 30
 
 # WHITE BALANCE
-WB = 4500
+WB = 4000
 
-RS_WB = 5500
+# Exposure
+#EXPOSURE = 166.0
+
+# Brightness
+BRIGHTNESS = 128.0
+
+RS_BRIGHTNESS = 32.0
 
 # Front Upper Realsense serial number
 FRONT_UPPER_REALSENSE_SERIAL_NUMBER = '242622071603'
@@ -82,7 +88,13 @@ class UpperCamera:
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
+            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
+            
+            print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_exposure)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.exposure)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.brightness)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
         
         except Exception as e:
@@ -154,6 +166,12 @@ class LowerCamera:
         set_fps = self.cap.set(cv2.CAP_PROP_FPS, FPS)
         self.cap.set(cv2.CAP_PROP_AUTO_WB, 0.0)
         set_wb = self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, WB)
+        self.cap.set(cv2.CAP_PROP_BRIGHTNESS, BRIGHTNESS)
+        
+        print(f"{self.cap.get(cv2.CAP_PROP_AUTO_EXPOSURE)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_EXPOSURE)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_BRIGHTNESS)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_AUTO_WB)=}")
         print(f"device_id_{device_id} fps:{self.cap.get(cv2.CAP_PROP_FPS)}->{set_fps} wb:{self.cap.get(cv2.CAP_PROP_WB_TEMPERATURE)}->{set_wb}")
         
         # v4l2-ctlを用いたホワイトバランスの固定
@@ -217,7 +235,13 @@ class RearCamera:
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
+            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
+            
+            print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_exposure)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.exposure)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.brightness)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
         except Exception as e:
             print(e)
