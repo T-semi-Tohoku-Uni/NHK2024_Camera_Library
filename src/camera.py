@@ -15,6 +15,8 @@ FPS = 30
 # WHITE BALANCE
 WB = 4500
 
+RS_WB = 5500
+
 # Front Upper Realsense serial number
 FRONT_UPPER_REALSENSE_SERIAL_NUMBER = '242622071603'
 
@@ -80,7 +82,7 @@ class UpperCamera:
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
         
         except Exception as e:
@@ -215,7 +217,7 @@ class RearCamera:
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
         except Exception as e:
             print(e)

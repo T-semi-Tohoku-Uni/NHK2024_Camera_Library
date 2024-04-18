@@ -41,8 +41,11 @@ UPPER_MIN_CONTOUR_AREA_THRESHOLD = 200
 LOWER_MIN_CONTOUR_AREA_THRESHOLD = 2000
 
 
-# 円形度の閾値
-CIRCULARITY_THRESHOLD=0.5
+# 下部カメラの円形度の閾値
+LOWER_CIRCULARITY_THRESHOLD=0.4
+
+# 上部カメラの円形度の閾値
+UPPER_CIRCULARITY_THRESHOLD=0.1
 
 # ロボット座標におけるアームのファンで吸い込めるエリアの中心と半径[mm]
 OBTAINABE_AREA_CENTER_X = 0
@@ -205,7 +208,7 @@ def threshold_otsu(hist, min_value=0, max_value=10):
     # クラス間分散が最大のときの閾値を返す
     return s_max[0]
 
-def find_circle_contours(mask_img, min_contour_area_threshold):
+def find_circle_contours(mask_img, min_contour_area_threshold, circularity_threshold):
     """
     マスク画像から円の輪郭を探す
     
@@ -230,7 +233,7 @@ def find_circle_contours(mask_img, min_contour_area_threshold):
         contours = list(filter(lambda x: cv2.contourArea(x) > min_contour_area_threshold, contours))
         
         # 最小外接円を求める
-        circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>CIRCULARITY_THRESHOLD]
+        circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>circularity_threshold]
     return circles
 
 def detect_horizon_vertical(original_line_list, line_type):
@@ -277,9 +280,11 @@ class DetectObj:
         self.red_upper_mask_1 = np.array([10,255,255])
         self.red_lower_mask_2 = np.array([230,20,20])
         self.red_upper_mask_2 = np.array([255,255,255])
+        self.white_lower_mask = np.array([0,120,80])
+        self.white_upper_mask = np.array([255,255,255])
         
         # fast line detector
-        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=10,distance_threshold=1.41421356,canny_th1=200.0,canny_th2=50.0,canny_aperture_size=3,do_merge=True)
+        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=50,distance_threshold=1.41421356,canny_th1=50.0,canny_th2=200.0,canny_aperture_size=3,do_merge=True)
      
     # 画像を取得してキューに入れる
     def capturing(self, q_frames, cap):
@@ -324,8 +329,14 @@ class DetectObj:
                 # BGRのBを抽出
                 blue = lcam_frame[:,:,0]
                 
+                # HLS変換
+                hls = cv2.cvtColor(lcam_frame, cv2.COLOR_BGR2HLS_FULL)
+                
+                # 輝度が高い場所を取得
+                lumi = cv2.inRange(hls,self.white_lower_mask,self.white_upper_mask)
+                
                 # 出力画像にガウシアンフィルタを適用する。
-                blur = cv2.GaussianBlur(blue, ksize=(7,7),sigmaX=0)
+                blur = cv2.GaussianBlur(blue, ksize=(3,3),sigmaX=0)
                 
                 # ライン検出
                 lines = self.fld.detect(blur)
@@ -336,13 +347,13 @@ class DetectObj:
                 
                 if lines is not None:
                     # 縦線かどうかの判定
-                    forward_list = [line for line in lines if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
-                    forward_list = [line.astype(int) for line in forward_list]
+                    forward_list = detect_horizon_vertical(lines, LINE_TYPE.FORWARD)
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
                     forward = True if len(forward_list)>=2 else False
                     
                     # 縦線の下の点に対応するxの値をロボット座標に変換したリスト
                     forward_x_list = [image_to_robot_coordinate_transformation(lcam_params,p[0][0],p[0][1],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)[0] if p[0][1]>p[0][3] else image_to_robot_coordinate_transformation(lcam_params,p[0][2],p[0][3],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)[0] for p in forward_list]
+                    # 昇順にソート
                     forward_x_list.sort()
                     if len(forward_x_list)>=2:
                         # 画像の中心に近い2本の線分のx座標の平均
@@ -351,20 +362,20 @@ class DetectObj:
                     # 画像の右端に点がある線分のリスト
                     right_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
                     # 横線かどうかの判定
-                    right_list = [line for line in right_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
-                    right_list = [line.astype(int) for line in right_list]
+                    right_list = detect_horizon_vertical(lines, LINE_TYPE.RIGHT)
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in right_list]
                     right = True if len(right_list)>=2 else False
 
                     # 画像の左端に点がある線分のリスト
                     left_list = [line for line in lines if line[0][0]>FRAME_WIDTH-LINE_MARGIN or line[0][2]>FRAME_WIDTH-LINE_MARGIN]
                     # 横線かどうかの判定
-                    left_list = [line for line in left_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
-                    left_list = [line.astype(int) for line in left_list]
+                    left_list = detect_horizon_vertical(lines,LINE_TYPE.LEFT)
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in left_list]
                     left = True if len(left_list)>=2 else False
 
-                line_show_frame = np.hstack((all_lines,filtered_frame))
+                blue = cv2.cvtColor(blue,cv2.COLOR_GRAY2BGR)
+                lumi = cv2.cvtColor(lumi,cv2.COLOR_GRAY2BGR)
+                line_show_frame = np.hstack((all_lines,blue,lumi,filtered_frame))
                 # キューに結果を入れる
                 output_data = (forward, right, left, diff_x)
                 q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
@@ -393,7 +404,7 @@ class DetectObj:
                 lcam_mask = cv2.inRange(lcam_hsv,self.blue_lower_mask,self.blue_upper_mask)
                 
                 # 下部カメラで円を検出する
-                circles = find_circle_contours(lcam_mask,LOWER_MIN_CONTOUR_AREA_THRESHOLD)
+                circles = find_circle_contours(lcam_mask,LOWER_MIN_CONTOUR_AREA_THRESHOLD,LOWER_CIRCULARITY_THRESHOLD)
                 # もし下部カメラで円が検出されたら
                 if len(circles) > 0:
                     # デバッグ用に円を描画
@@ -406,7 +417,7 @@ class DetectObj:
                 # もし下部カメラで円が検出されなければ
                 else:
                     # 上部カメラで円を検出する
-                    circles = find_circle_contours(ucam_mask,UPPER_MIN_CONTOUR_AREA_THRESHOLD)
+                    circles = find_circle_contours(ucam_mask,UPPER_MIN_CONTOUR_AREA_THRESHOLD,UPPER_CIRCULARITY_THRESHOLD)
                     
                     # 上部カメラはカメラ画像の下半分だけ見る
                     circles = [[(c[0][0],c[0][1]), c[1]] for c in circles if c[0][1] > FRAME_HEIGHT/2]
