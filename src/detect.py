@@ -59,10 +59,15 @@ LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 575
 LINE_MARGIN = 30
 
 # 縦線、横線の角度の閾値[rad]
-LINE_SLOPE_THRESHOLD = 0.52
+LINE_SLOPE_THRESHOLD = 0.26
 
 # サイロの個数
 NUMBER_OF_SILO = 5
+
+# 俯瞰画像にする領域のマージン
+UPPER_MERGIN = 80
+LOWER_MERGIN = 105
+REAR_MERGIN = 80
     
 class OUTPUT_ID(Enum):
     BALL = 0
@@ -265,6 +270,16 @@ def detect_horizon_vertical(original_line_list, line_type):
         
     return filtered_line_list
 
+def perspective_transform(frame, point):
+    """
+    俯瞰に変換
+    """
+    src = point
+    dst = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH,0],[0,0],[0,FRAME_HEIGHT]],dtype=np.float32)
+    M = cv2.getPerspectiveTransform(src, dst)
+    result = cv2.warpPerspective(frame,M,(320,240))
+    return result
+
 class DetectObj:
     def __init__(self,model_path):
         # YOLOv8 modelのロード
@@ -316,6 +331,9 @@ class DetectObj:
                 # 下部カメラから画像を読み込む
                 lcam_frame = q_lcam.get()
                 
+                lower_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-LOWER_MERGIN,0],[LOWER_MERGIN,0],[0,FRAME_HEIGHT]], dtype=np.float32)
+                bird_frame = perspective_transform(lcam_frame, lower_bird_point)
+                
                 ###ライン検出ここから###
                 # 奥行方向のラインがあるかどうか：bool
                 forward = False
@@ -324,13 +342,14 @@ class DetectObj:
                 # 左方向のラインがあるかどうか：bool
                 left = False
                 # 奥行方向のラインの、水平方向のずれを出力(ロボットの中心から前方向300mmくらい)
-                diff_x = 0.0
+                lower_x = 0.0
+                forward_theta = 0.0
                 
                 # BGRのBを抽出
-                blue = lcam_frame[:,:,0]
+                blue = bird_frame[:,:,0]
                 
                 # HLS変換
-                hls = cv2.cvtColor(lcam_frame, cv2.COLOR_BGR2HLS_FULL)
+                hls = cv2.cvtColor(bird_frame, cv2.COLOR_BGR2HLS_FULL)
                 
                 # 輝度が高い場所を取得
                 lumi = cv2.inRange(hls,self.white_lower_mask,self.white_upper_mask)
@@ -351,13 +370,27 @@ class DetectObj:
                     [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
                     forward = True if len(forward_list)>=2 else False
                     
-                    # 縦線の下の点に対応するxの値をロボット座標に変換したリスト
-                    forward_x_list = [image_to_robot_coordinate_transformation(lcam_params,p[0][0],p[0][1],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)[0] if p[0][1]>p[0][3] else image_to_robot_coordinate_transformation(lcam_params,p[0][2],p[0][3],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)[0] for p in forward_list]
-                    # 昇順にソート
-                    forward_x_list.sort()
-                    if len(forward_x_list)>=2:
+                    res_list = []
+                    
+                    # 縦線の上下の点に対応するxの値をロボット座標に変換したリスト
+                    for p in forward_list:
+                        point1 = image_to_robot_coordinate_transformation(lcam_params,p[0][0],p[0][1],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
+                        point2 = image_to_robot_coordinate_transformation(lcam_params,p[0][2],p[0][3],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
+                        if point1>point2:
+                            res_list.append((point1,point2))
+                        else:
+                            res_list.append((point2,point1))
+                    
+                    # 下点のxについて昇順ソート
+                    res_list.sort(key=lambda x: x[0][0])
+                    if len(res_list)>=2:
                         # 画像の中心に近い2本の線分のx座標の平均
-                        diff_x = (forward_x_list[0]+forward_x_list[1])/2
+                        lower_x = (res_list[0][0][0]+res_list[1][0][0])/2
+                        upper_x = (res_list[0][1][0]+res_list[1][1][0])/2
+                        lower_y = (res_list[0][0][1]+res_list[1][0][1])/2
+                        upper_y = (res_list[0][1][1]+res_list[1][1][1])/2
+                        
+                        forward_theta = - np.pi/2 + np.arccos((upper_x - lower_x)/np.sqrt((upper_x - lower_x)**2+(upper_y - lower_y)**2))
                         
                     # 画像の右端に点がある線分のリスト
                     right_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
@@ -377,7 +410,7 @@ class DetectObj:
                 lumi = cv2.cvtColor(lumi,cv2.COLOR_GRAY2BGR)
                 line_show_frame = np.hstack((all_lines,blue,lumi,filtered_frame))
                 # キューに結果を入れる
-                output_data = (forward, right, left, diff_x)
+                output_data = (forward, right, left, lower_x, forward_theta)
                 q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
                 ###ライン検出ここまで###
                 

@@ -26,8 +26,8 @@ if __name__ == "__main__":
                 x,y,z = output_data
                 print(f"\n{id=}, {x=}, {y=}, {z=}")
             elif id == OUTPUT_ID.LINE:
-                forward, right, left, x = output_data
-                print(f"\n{id=}, {forward=}, {right=}, {left=}, {x=}")
+                forward, right, left, x, theta = output_data
+                print(f"\n{id=}, {forward=}, {right=}, {left=}, {x=}, {theta=}")
             
         except KeyboardInterrupt:
             break
