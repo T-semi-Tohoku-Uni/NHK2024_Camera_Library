@@ -35,14 +35,14 @@ SILO_HEIGHT = 425.0
 DETECTABLE_MAX_DIS = 10000.0
 
 # 検出した輪郭の最小面積(上部のカメラ)[pxl]
-UPPER_MIN_CONTOUR_AREA_THRESHOLD = 300
+UPPER_MIN_CONTOUR_AREA_THRESHOLD = 200
 
 # 検出した輪郭の最小面積(下部のカメラ)[pxl]
-LOWER_MIN_CONTOUR_AREA_THRESHOLD = 2000
+LOWER_MIN_CONTOUR_AREA_THRESHOLD = 800
 
 
 # 下部カメラの円形度の閾値
-LOWER_CIRCULARITY_THRESHOLD=0.5
+LOWER_CIRCULARITY_THRESHOLD=0.3
 
 # 上部カメラの円形度の閾値
 UPPER_CIRCULARITY_THRESHOLD=0.3
@@ -54,13 +54,13 @@ OBTAINABE_AREA_RADIUS = 60
 
 # カメラからラインの検出点までの距離[mm]
 LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 575
-UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 1000
+UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 990
 
 # 画像端から何ピクセル分の点までを、画像端から伸びてる線分とみなすか
 LINE_MARGIN = 30
 
 # 縦線、横線の角度の閾値[rad]
-LINE_SLOPE_THRESHOLD = 0.26
+LINE_SLOPE_THRESHOLD = 0.52
 
 # サイロの個数
 NUMBER_OF_SILO = 5
@@ -361,10 +361,10 @@ class DetectObj:
         self.model = YOLO(model_path)
         
         # maskの値を設定する
-        self.blue_lower_mask = np.array([135, 40, 40])
-        self.blue_upper_mask = np.array([160, 255, 255])
+        self.blue_lower_mask = np.array([139, 20, 20])
+        self.blue_upper_mask = np.array([165, 255, 255])
         self.purple_lower_mask = np.array([165,40,40])
-        self.purple_upper_mask = np.array([230,255,255])
+        self.purple_upper_mask = np.array([230,250,250])
         self.red_lower_mask_1 = np.array([0,40,40])
         self.red_upper_mask_1 = np.array([10,255,255])
         self.red_lower_mask_2 = np.array([230,40,40])
@@ -373,7 +373,7 @@ class DetectObj:
         self.white_upper_mask = np.array([255,255,255])
         
         # fast line detector
-        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=50,distance_threshold=1.41421356,canny_th1=50.0,canny_th2=200.0,canny_aperture_size=3,do_merge=True)
+        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=10,distance_threshold=1.41421356,canny_th1=150.0,canny_th2=180.0,canny_aperture_size=3,do_merge=True)
      
         self.ball_camera_out = (0,0.0,0.0,DETECTABLE_MAX_DIS,False)
         self.silo_camera_out = (0.0,0.0,0.0)
@@ -421,84 +421,67 @@ class DetectObj:
                 # 下部カメラから画像を読み込む
                 lcam_frame = q_lcam.get()
                 
-                
-                # 出力画像にガウシアンフィルタを適用する。
-                lcam_blur = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
+                # Gaussian Blur
+                lcam_line_blur = cv2.GaussianBlur(lcam_frame, ksize=(3,3),sigmaX=0)
                 
                 _, _, _, _, _, _, _, lower_bird_point = lcam_params
-                bird_frame = bird_perspective_transform(lcam_blur, lower_bird_point)
+                bird_frame = bird_perspective_transform(lcam_line_blur, lower_bird_point)
                 
                 # BGRのBを抽出
                 l_blue = bird_frame[:,:,0]
                 
+                # ライン検出
+                l_lines = self.fld.detect(l_blue)
+
+                # image for debug
+                l_all_lines = self.fld.drawSegments(lcam_frame,l_lines)
+                
                 # 上部カメラから画像を読み込む
                 ucam_frame = q_ucam.get()
                 
-                # 出力画像にガウシアンフィルタを適用する。
-                ucam_blur = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
+                # Gaussian Blur
+                ucam_line_blur = cv2.GaussianBlur(ucam_frame, ksize=(3,3),sigmaX=0)
                 
                 _, _, _, _, _, _, _, upper_bird_point = ucam_params
-                bird_frame = bird_perspective_transform(ucam_blur, upper_bird_point)
+                bird_frame = bird_perspective_transform(ucam_line_blur, upper_bird_point)
                 
                 # BGRのBを抽出
                 u_blue = bird_frame[:,:,0]
                 
-                # HLS変換
-                #hls = cv2.cvtColor(bird_frame, cv2.COLOR_BGR2HLS_FULL)
-                
-                # 輝度が高い場所を取得
-                #lumi = cv2.inRange(hls,self.white_lower_mask,self.white_upper_mask)
-                
-                # blueとlumiのOR
-                #img_or = cv2.bitwise_or(blue, lumi)
-                
-                # HLS変換
-                #hls = cv2.cvtColor(bird_frame, cv2.COLOR_BGR2HLS_FULL)
-                
-                # 輝度が高い場所を取得
-                #lumi = cv2.inRange(hls,self.white_lower_mask,self.white_upper_mask)
-                
-                # blueとlumiのOR
-                #img_or = cv2.bitwise_or(blue, lumi)
-                
                 # ライン検出
-                lines = self.fld.detect(l_blue)
+                u_lines = self.fld.detect(u_blue)
 
                 # image for debug
-                #all_lines = self.fld.drawSegments(lcam_frame,lines)
+                u_all_lines = self.fld.drawSegments(ucam_frame,u_lines)
+                
                 l_filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
                 u_filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
                         
-                if lines is not None:
+                if l_lines is not None:
                     # 右線かどうかの判定
-                    (is_right) = detect_horizon_vertical(lines, LINE_TYPE.RIGHT,lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
+                    (is_right) = detect_horizon_vertical(l_lines, LINE_TYPE.RIGHT,lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
                     # 左線かどうかの判定
-                    (is_left) = detect_horizon_vertical(lines,LINE_TYPE.LEFT,lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
+                    (is_left) = detect_horizon_vertical(l_lines,LINE_TYPE.LEFT,lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
                     # 縦線かどうかの判定
-                    (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(lines, LINE_TYPE.FORWARD, lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
+                    (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(l_lines, LINE_TYPE.FORWARD, lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
                     
                     # 縦線が無ければ
                     if not is_forward:
-                        # ライン検出
-                        lines = self.fld.detect(u_blue)
-
-                        # image for debug
-                        #all_lines = self.fld.drawSegments(ucam_frame,lines)
-                        if lines is not None:
+                        if u_lines is not None:
                             # 右線かどうかの判定
-                            (is_right) = detect_horizon_vertical(lines, LINE_TYPE.RIGHT,ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, u_filtered_frame)
+                            (is_right) = detect_horizon_vertical(u_lines, LINE_TYPE.RIGHT,ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, u_filtered_frame)
                             # 左線かどうかの判定
-                            (is_left) = detect_horizon_vertical(lines,LINE_TYPE.LEFT,ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
+                            (is_left) = detect_horizon_vertical(u_lines,LINE_TYPE.LEFT,ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
                             # 縦線かどうかの判定
-                            (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(lines, LINE_TYPE.FORWARD, ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
+                            (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(u_lines, LINE_TYPE.FORWARD, ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
                 l_blue = cv2.cvtColor(l_blue,cv2.COLOR_GRAY2BGR)
-                l_line_show_frame = np.hstack((l_blue,l_filtered_frame))            
+                l_line_show_frame = np.hstack((l_all_lines,l_blue,l_filtered_frame))            
                 u_blue = cv2.cvtColor(u_blue,cv2.COLOR_GRAY2BGR)
-                u_line_show_frame = np.hstack((u_blue,u_filtered_frame))
-                line_show_frame = np.vstack((l_line_show_frame,u_line_show_frame))
+                u_line_show_frame = np.hstack((u_all_lines,u_blue,u_filtered_frame))
+                line_show_frame = np.vstack((u_line_show_frame,l_line_show_frame))
                 # キューに結果を入れる
                 output_data = (is_forward, is_right, is_left, error_forward_x, error_forward_angle)
-                #q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
+                q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
                 self.line_camera_out = output_data
                 
                 ###ライン検出ここまで###
@@ -510,20 +493,27 @@ class DetectObj:
                 paddy_rice_z = DETECTABLE_MAX_DIS
                 is_obtainable = False
 
+                ucam_ball_blur = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
+                lcam_ball_blur = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
+                
                 # カメラ画像をHSVに変換
-                ucam_hsv = cv2.cvtColor(ucam_blur, cv2.COLOR_BGR2HSV_FULL)
-                lcam_hsv = cv2.cvtColor(lcam_blur, cv2.COLOR_BGR2HSV_FULL)
+                ucam_hsv = cv2.cvtColor(ucam_ball_blur, cv2.COLOR_BGR2HSV_FULL)
+                lcam_hsv = cv2.cvtColor(lcam_ball_blur, cv2.COLOR_BGR2HSV_FULL)
 
                 # 閾値でmasking処理
                 ucam_mask = cv2.inRange(ucam_hsv,self.blue_lower_mask,self.blue_upper_mask)
                 lcam_mask = cv2.inRange(lcam_hsv,self.blue_lower_mask,self.blue_upper_mask)
                 
+                # モルフォロジー変換でクロージング処理
+                ucam_close = cv2.morphologyEx(ucam_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
+                lcam_close = cv2.morphologyEx(lcam_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
+                
                 # 下部カメラで円を検出する
-                circles = find_circle_contours(lcam_mask,LOWER_MIN_CONTOUR_AREA_THRESHOLD,LOWER_CIRCULARITY_THRESHOLD)
+                circles = find_circle_contours(lcam_close,LOWER_MIN_CONTOUR_AREA_THRESHOLD,LOWER_CIRCULARITY_THRESHOLD)
                 # もし下部カメラで円が検出されたら
                 if len(circles) > 0:
                     # デバッグ用に円を描画
-                    [cv2.circle(lcam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
+                    [cv2.circle(lcam_ball_blur,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
                     # 返り値の更新
                     items = len(circles)
                     target = circles.index(max(circles, key=lambda x:x[1]))
@@ -532,7 +522,7 @@ class DetectObj:
                 # もし下部カメラで円が検出されなければ
                 else:
                     # 上部カメラで円を検出する
-                    circles = find_circle_contours(ucam_mask,UPPER_MIN_CONTOUR_AREA_THRESHOLD,UPPER_CIRCULARITY_THRESHOLD)
+                    circles = find_circle_contours(ucam_close,UPPER_MIN_CONTOUR_AREA_THRESHOLD,UPPER_CIRCULARITY_THRESHOLD)
                     
                     # 上部カメラはカメラ画像の下半分だけ見る
                     circles = [[(c[0][0],c[0][1]), c[1]] for c in circles if c[0][1] > FRAME_HEIGHT/2]
@@ -540,7 +530,7 @@ class DetectObj:
                     # もし上部カメラで円が検出されたら
                     if len(circles) > 0:
                         # デバッグ用に円を描画
-                        [cv2.circle(ucam_frame,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
+                        [cv2.circle(ucam_ball_blur,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
                         # 返り値の更新
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
@@ -548,13 +538,13 @@ class DetectObj:
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                         
                 # 画像のタイプを揃える
-                ucam_mask = cv2.cvtColor(ucam_mask,cv2.COLOR_GRAY2BGR)
-                lcam_mask = cv2.cvtColor(lcam_mask,cv2.COLOR_GRAY2BGR)
-                ball_show_frame = np.vstack((np.hstack((ucam_frame,ucam_mask)),np.hstack((lcam_frame,lcam_mask))))
+                ucam_close = cv2.cvtColor(ucam_close,cv2.COLOR_GRAY2BGR)
+                lcam_close = cv2.cvtColor(lcam_close,cv2.COLOR_GRAY2BGR)
+                ball_show_frame = np.vstack((np.hstack((ucam_ball_blur,ucam_close)),np.hstack((lcam_ball_blur,lcam_close))))
                 
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                #q_out.put((ball_show_frame, OUTPUT_ID.BALL, output_data))
+                q_out.put((ball_show_frame, OUTPUT_ID.BALL, output_data))
                 self.ball_camera_out = output_data
                 ###ボール検出ここまで###
             except KeyboardInterrupt:
@@ -607,7 +597,7 @@ class DetectObj:
                 
                 # キューに送信
                 output_data = (target_silo_x,target_silo_y,target_silo_z)
-                #q_out.put((annotated_frame, OUTPUT_ID.SILO, output_data))
+                q_out.put((annotated_frame, OUTPUT_ID.SILO, output_data))
                 self.silo_camera_out = output_data
             except KeyboardInterrupt:
                 break

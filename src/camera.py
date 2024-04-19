@@ -13,15 +13,28 @@ FRAME_HEIGHT = 240
 FPS = 30
 
 # WHITE BALANCE
-WB = 4000
+WB = 5500
+RS_WB = 5000
 
-# Exposure
-#EXPOSURE = 166.0
+# Gain
+GAIN = 50
+RS_GAIN = 50
+
+# Contrast
+CONTRAST = 50
+RS_CONTRAST = 50
+
+# Hue
+HUE = -1
+RS_HUE = 0
+
+# Saturation
+SATURATION = 32
+RS_SATURATION = 64
 
 # Brightness
-BRIGHTNESS = 128.0
-
-RS_BRIGHTNESS = 32.0
+BRIGHTNESS = 170
+RS_BRIGHTNESS = 0
 
 # Front Upper Realsense serial number
 FRONT_UPPER_REALSENSE_SERIAL_NUMBER = '242622071603'
@@ -88,11 +101,17 @@ class UpperCamera:
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
+            rgb_camera_sensor.set_option(rs.option.gain, RS_GAIN)
+            rgb_camera_sensor.set_option(rs.option.contrast, RS_CONTRAST)
+            rgb_camera_sensor.set_option(rs.option.hue, RS_HUE)
+            rgb_camera_sensor.set_option(rs.option.saturation, RS_SATURATION)
             rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
             
-            print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_exposure)=}")
-            print(f"{rgb_camera_sensor.get_option(rs.option.exposure)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.gain)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.contrast)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.hue)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.saturation)=}")
             print(f"{rgb_camera_sensor.get_option(rs.option.brightness)=}")
             print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
@@ -116,8 +135,8 @@ class UpperCamera:
         theta_z = 0
         
         # 俯瞰画像にする領域のマージン
-        UPPER_MERGIN = 80
-        upper_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-UPPER_MERGIN,FRAME_HEIGHT*2/3],[UPPER_MERGIN,FRAME_HEIGHT*2/3],[0,FRAME_HEIGHT]], dtype=np.float32)
+        UPPER_MERGIN = 120
+        upper_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-UPPER_MERGIN,FRAME_HEIGHT/2],[UPPER_MERGIN,FRAME_HEIGHT/2],[0,FRAME_HEIGHT]], dtype=np.float32)
         
         self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,upper_bird_point)
         
@@ -170,10 +189,16 @@ class LowerCamera:
         set_fps = self.cap.set(cv2.CAP_PROP_FPS, FPS)
         self.cap.set(cv2.CAP_PROP_AUTO_WB, 0.0)
         set_wb = self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, WB)
+        self.cap.set(cv2.CAP_PROP_GAIN, GAIN)
+        self.cap.set(cv2.CAP_PROP_CONTRAST, CONTRAST)
+        self.cap.set(cv2.CAP_PROP_SATURATION, SATURATION)
+        self.cap.set(cv2.CAP_PROP_HUE, HUE)
         self.cap.set(cv2.CAP_PROP_BRIGHTNESS, BRIGHTNESS)
         
-        print(f"{self.cap.get(cv2.CAP_PROP_AUTO_EXPOSURE)=}")
-        print(f"{self.cap.get(cv2.CAP_PROP_EXPOSURE)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_GAIN)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_CONTRAST)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_SATURATION)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_HUE)=}")
         print(f"{self.cap.get(cv2.CAP_PROP_BRIGHTNESS)=}")
         print(f"{self.cap.get(cv2.CAP_PROP_AUTO_WB)=}")
         print(f"device_id_{device_id} fps:{self.cap.get(cv2.CAP_PROP_FPS)}->{set_fps} wb:{self.cap.get(cv2.CAP_PROP_WB_TEMPERATURE)}->{set_wb}")
@@ -242,11 +267,17 @@ class RearCamera:
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
+            rgb_camera_sensor.set_option(rs.option.gain, RS_GAIN)
+            rgb_camera_sensor.set_option(rs.option.contrast, RS_CONTRAST)
+            rgb_camera_sensor.set_option(rs.option.hue, RS_HUE)
+            rgb_camera_sensor.set_option(rs.option.saturation, RS_SATURATION)
             rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
             
-            print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_exposure)=}")
-            print(f"{rgb_camera_sensor.get_option(rs.option.exposure)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.contrast)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.gain)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.hue)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.saturation)=}")
             print(f"{rgb_camera_sensor.get_option(rs.option.brightness)=}")
             print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
@@ -268,8 +299,8 @@ class RearCamera:
         theta_y = 0
         theta_z = 0
         
-        REAR_MERGIN = 80
-        rear_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-REAR_MERGIN,FRAME_HEIGHT*2/3],[REAR_MERGIN,FRAME_HEIGHT*2/3],[0,FRAME_HEIGHT]], dtype=np.float32)
+        REAR_MERGIN = 120
+        rear_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-REAR_MERGIN,FRAME_HEIGHT/2],[REAR_MERGIN,FRAME_HEIGHT/2],[0,FRAME_HEIGHT]], dtype=np.float32)
         
         self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,rear_bird_point)
 
