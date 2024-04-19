@@ -35,22 +35,21 @@ SILO_HEIGHT = 425.0
 DETECTABLE_MAX_DIS = 10000.0
 
 # 検出した輪郭の最小面積(上部のカメラ)[pxl]
-UPPER_MIN_CONTOUR_AREA_THRESHOLD = 200
+UPPER_MIN_CONTOUR_AREA_THRESHOLD = 180
 
 # 検出した輪郭の最小面積(下部のカメラ)[pxl]
 LOWER_MIN_CONTOUR_AREA_THRESHOLD = 800
 
+# 上部カメラの円形度の閾値
+UPPER_CIRCULARITY_THRESHOLD=0.3
 
 # 下部カメラの円形度の閾値
 LOWER_CIRCULARITY_THRESHOLD=0.3
 
-# 上部カメラの円形度の閾値
-UPPER_CIRCULARITY_THRESHOLD=0.3
-
 # ロボット座標におけるアームのファンで吸い込めるエリアの中心と半径[mm]
 OBTAINABE_AREA_CENTER_X = 0
-OBTAINABE_AREA_CENTER_Y = 550
-OBTAINABE_AREA_RADIUS = 60
+OBTAINABE_AREA_CENTER_Y = 525
+OBTAINABE_AREA_RADIUS = 80
 
 # カメラからラインの検出点までの距離[mm]
 LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 575
@@ -361,7 +360,7 @@ class DetectObj:
         self.model = YOLO(model_path)
         
         # maskの値を設定する
-        self.blue_lower_mask = np.array([139, 20, 20])
+        self.blue_lower_mask = np.array([138, 20, 20])
         self.blue_upper_mask = np.array([165, 255, 255])
         self.purple_lower_mask = np.array([165,40,40])
         self.purple_upper_mask = np.array([230,250,250])
