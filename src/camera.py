@@ -115,7 +115,11 @@ class UpperCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        # 俯瞰画像にする領域のマージン
+        UPPER_MERGIN = 80
+        upper_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-UPPER_MERGIN,FRAME_HEIGHT*2/3],[UPPER_MERGIN,FRAME_HEIGHT*2/3],[0,FRAME_HEIGHT]], dtype=np.float32)
+        
+        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,upper_bird_point)
         
         # counter for calculate fps
         self.counter = 0
@@ -189,7 +193,10 @@ class LowerCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        LOWER_MERGIN = 105
+        lower_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-LOWER_MERGIN,0],[LOWER_MERGIN,0],[0,FRAME_HEIGHT]], dtype=np.float32)
+        
+        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,lower_bird_point)
     
         # counter for calculate fps
         self.counter = 0
@@ -261,7 +268,10 @@ class RearCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        REAR_MERGIN = 80
+        rear_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-REAR_MERGIN,FRAME_HEIGHT*2/3],[REAR_MERGIN,FRAME_HEIGHT*2/3],[0,FRAME_HEIGHT]], dtype=np.float32)
+        
+        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,rear_bird_point)
 
         # counter for calculate fps
         self.counter = 0

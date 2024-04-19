@@ -3,7 +3,7 @@ import queue
 from enum import Enum
 from ultralytics import YOLO
 from .camera import UpperCamera,LowerCamera,RearCamera
-from .detect import DetectObj
+from .detect import DetectObj, OUTPUT_ID
 
 class MainProcess:
     def __init__(self,model_path):
@@ -23,6 +23,10 @@ class MainProcess:
         self.q_lower_in = queue.Queue(maxsize=1)
         self.q_rear_in = queue.Queue(maxsize=1)
         self.q_out = queue.Queue(maxsize=3)
+        
+        self.ball_camera_out = (0,0.0,0.0,0.0,False)
+        self.silo_camera_out = (0.0,0.0,0.0)
+        self.line_camera_out = (False,False,False,0.0,0.0)
 
     # カメラからの画像取得と画像処理、推論(デプス無し)をスレッドごとに分けて実行      
     def thread_start(self):
@@ -38,6 +42,16 @@ class MainProcess:
         self.thread_front_detector.start()
         self.thread_rear_detector.start()
         
+    def update_ball_camera_out(self):
+        return self.detector.ball_camera_out
+    
+    def update_silo_camera_out(self):
+        return self.detector.silo_camera_out
+    
+    def update_line_camera_out(self):
+        return self.detector.line_camera_out
+        
+    
     # キューを空にする
     def terminate_queue(self):
         for q in (self.q_upper_in,self.q_lower_in,self.q_rear_in,self.q_out):

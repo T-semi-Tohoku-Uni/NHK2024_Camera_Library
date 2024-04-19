@@ -53,7 +53,8 @@ OBTAINABE_AREA_CENTER_Y = 550
 OBTAINABE_AREA_RADIUS = 80
 
 # カメラからラインの検出点までの距離[mm]
-LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 575
+LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 575
+UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 625
 
 # 画像端から何ピクセル分の点までを、画像端から伸びてる線分とみなすか
 LINE_MARGIN = 30
@@ -63,11 +64,6 @@ LINE_SLOPE_THRESHOLD = 0.26
 
 # サイロの個数
 NUMBER_OF_SILO = 5
-
-# 俯瞰画像にする領域のマージン
-UPPER_MERGIN = 80
-LOWER_MERGIN = 105
-REAR_MERGIN = 80
     
 class OUTPUT_ID(Enum):
     BALL = 0
@@ -162,7 +158,7 @@ def image_to_robot_coordinate_transformation(params,w, h, dis):
         垂直方向 [mm]
     
     """
-    (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z) = params
+    (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,_) = params
     internal_param_inv = np.array([[1/focal_length, 0, 0], [0,1/focal_length, 0], [0, 0, 1] ,[0, 0, 1/dis]])
     external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), pos_x],
                         [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), pos_y],
@@ -241,7 +237,38 @@ def find_circle_contours(mask_img, min_contour_area_threshold, circularity_thres
         circles = [cv2.minEnclosingCircle(cnt) for cnt in contours if calc_circularity(cnt)>circularity_threshold]
     return circles
 
-def detect_horizon_vertical(original_line_list, line_type):
+
+def bird_perspective_transform(frame, src):
+    """
+    俯瞰に変換
+    """
+    dst = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH,0],[0,0],[0,FRAME_HEIGHT]],dtype=np.float32)
+    
+    M = cv2.getPerspectiveTransform(src, dst)
+    result = cv2.warpPerspective(frame,M,(FRAME_WIDTH,FRAME_HEIGHT))
+    return result
+
+def bird_to_robot_coordinate_transformation(cam_params,w,h,dis):
+    """
+    俯瞰からロボット座標に変換
+    """
+    dst = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH,0],[0,0],[0,FRAME_HEIGHT]],dtype=np.float32)
+    (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,src) = cam_params
+    M_inv = cv2.getPerspectiveTransform(src, dst)
+    internal_param_inv = np.array([[1/focal_length, 0, 0], [0,1/focal_length, 0], [0, 0, 1] ,[0, 0, 1/dis]])
+    external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), pos_x],
+                        [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), pos_y],
+                        [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), pos_z],
+                        [0, 0, 0, 1]])
+    # Opencvの座標でいう(FRAME_WIDTH/2, FRAME_HEIGHT/2)が(0,0)になるよう平行移動
+    Target = np.array([[(w-FRAME_WIDTH/2)*dis], [(-h+FRAME_HEIGHT/2)*dis], [dis]])
+    
+    coordinate = external_param @ internal_param_inv @ M_inv @ Target 
+    
+    # 水平方向のみ返す
+    return int(coordinate[0,0])
+
+def detect_horizon_vertical(original_line_list, line_type, cam_param, line_detection_point_to_camera_distance, result_frame):
     """
     縦のラインもしくは横のラインを検出する
     
@@ -251,34 +278,81 @@ def detect_horizon_vertical(original_line_list, line_type):
         元のライン情報のリスト
     line_type : Enum
         ラインの種類（縦，右，左）
-        
+    cam_param :tuple
+        カメラのパラメータ
+    line_detection_point_to_camera_distance:int
+        camera to line dis
+    result_frame :numpy
+        ラインを表示する出力画像        
     Returns
     -------
-    filtered_line_list : list
-        縦若しくは横のラインのリスト
-    
+    output : tuple
+        縦の場合は(is_forward: bool,error_forward_x: float,error_forward_angle: float)
+        右の場合は(is_right: bool)
+        左の場合は(is_left: bool)
     """
-    filtered_line_list = []
+    
+    output = ()
     
     if line_type == LINE_TYPE.FORWARD:
+        # 角度を基に縦線を求める  
         filtered_line_list = [line for line in original_line_list if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
         filtered_line_list = [line.astype(int) for line in filtered_line_list]
+        # デバッグ用
+        [cv2.line(result_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in filtered_line_list]
+        # 2本以上ラインがあればTrue
+        is_forward = True if len(filtered_line_list)>=2 else False
+             
+        forward_list = []
+        error_forward_x = 0.0
+        error_forward_angle = 0.0    
+        # ((縦線の下の点),(縦線の上の点))のリスト
+        for p in filtered_line_list:
+            if p[0][1] > p[0][3]:
+                forward_list.append(((p[0][0],p[0][1]), (p[0][2],p[0][3])))
+            else:
+                forward_list.append(((p[0][2],p[0][3]), (p[0][0],p[0][1])))
+        # 下点のxについて昇順ソート
+        forward_list.sort(key=lambda x: x[0][0])    
         
-    elif line_type == LINE_TYPE.RIGHT or LINE_TYPE.LEFT:
-        filtered_line_list = [line for line in original_line_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
-        filtered_line_list = [line.astype(int) for line in filtered_line_list]
+        if len(forward_list)>=2:
+            # 画像の中心に近い2本の線分のx座標の平均
+            lower_x = (forward_list[0][0][0]+forward_list[1][0][0])/2
+            upper_x = (forward_list[0][1][0]+forward_list[1][1][0])/2
+            lower_y = (forward_list[0][0][1]+forward_list[1][0][1])/2
+            upper_y = (forward_list[0][1][1]+forward_list[1][1][1])/2
         
-    return filtered_line_list
+            error_forward_angle = - np.pi/2 + np.arccos((upper_x - lower_x)/np.sqrt((upper_x - lower_x)**2+(upper_y - lower_y)**2))
+            error_forward_x = bird_to_robot_coordinate_transformation(cam_param,lower_x,lower_y,line_detection_point_to_camera_distance) 
 
-def perspective_transform(frame, point):
-    """
-    俯瞰に変換
-    """
-    src = point
-    dst = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH,0],[0,0],[0,FRAME_HEIGHT]],dtype=np.float32)
-    M = cv2.getPerspectiveTransform(src, dst)
-    result = cv2.warpPerspective(frame,M,(320,240))
-    return result
+        output = (is_forward, error_forward_x, error_forward_angle)
+        
+    elif line_type == LINE_TYPE.RIGHT:
+        # 画像の右端に点がある線分のリスト
+        filtered_line_list = [line for line in original_line_list if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
+        # 角度を基に横線を求める          
+        filtered_line_list = [line for line in filtered_line_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+        filtered_line_list = [line.astype(int) for line in filtered_line_list]
+        # デバッグ用
+        [cv2.line(result_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in filtered_line_list]
+        # 2本以上ラインがあればTrue
+        is_right = True if len(filtered_line_list)>=2 else False
+        output = (is_right)
+        
+    elif line_type == LINE_TYPE.LEFT:
+        # 画像の左端に点がある線分のリスト
+        filtered_line_list = [line for line in original_line_list if line[0][0]>FRAME_WIDTH-LINE_MARGIN or line[0][2]>FRAME_WIDTH-LINE_MARGIN]
+        # 角度を基に横線を求める            
+        filtered_line_list = [line for line in filtered_line_list if abs(np.arcsin(abs(line[0][1]-line[0][3])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
+        filtered_line_list = [line.astype(int) for line in filtered_line_list]
+        # デバッグ用
+        [cv2.line(result_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in filtered_line_list]
+        # 2本以上ラインがあればTrue
+        is_left = True if len(filtered_line_list)>=2 else False
+        output = (is_left)
+        
+    return output
+
 
 class DetectObj:
     def __init__(self,model_path):
@@ -301,6 +375,10 @@ class DetectObj:
         # fast line detector
         self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=50,distance_threshold=1.41421356,canny_th1=50.0,canny_th2=200.0,canny_aperture_size=3,do_merge=True)
      
+        self.ball_camera_out = (0,0.0,0.0,0.0,False)
+        self.silo_camera_out = (0.0,0.0,0.0)
+        self.line_camera_out = (False,False,False,0.0,0.0)
+        
     # 画像を取得してキューに入れる
     def capturing(self, q_frames, cap):
         while True:
@@ -328,105 +406,110 @@ class DetectObj:
     def detecting_front(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
         while True:
             try:
-                # 下部カメラから画像を読み込む
-                lcam_frame = q_lcam.get()
-                
-                lower_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-LOWER_MERGIN,0],[LOWER_MERGIN,0],[0,FRAME_HEIGHT]], dtype=np.float32)
-                bird_frame = perspective_transform(lcam_frame, lower_bird_point)
-                
                 ###ライン検出ここから###
                 # 奥行方向のラインがあるかどうか：bool
-                forward = False
+                is_forward = False
                 # 右方向のラインがあるかどうか：bool
-                right = False
+                is_right = False
                 # 左方向のラインがあるかどうか：bool
-                left = False
+                is_left = False
                 # 奥行方向のラインの、水平方向のずれを出力(ロボットの中心から前方向300mmくらい)
-                lower_x = 0.0
-                forward_theta = 0.0
+                error_forward_x = 0.0
+                # 奥行方向のラインの角度のずれ
+                error_forward_angle = 0.0
                 
-                # BGRのBを抽出
-                blue = bird_frame[:,:,0]
-                
-                # HLS変換
-                hls = cv2.cvtColor(bird_frame, cv2.COLOR_BGR2HLS_FULL)
-                
-                # 輝度が高い場所を取得
-                lumi = cv2.inRange(hls,self.white_lower_mask,self.white_upper_mask)
-                
-                # 出力画像にガウシアンフィルタを適用する。
-                blur = cv2.GaussianBlur(blue, ksize=(3,3),sigmaX=0)
-                
-                # ライン検出
-                lines = self.fld.detect(blur)
-
-                # image for debug
-                all_lines = self.fld.drawSegments(lcam_frame,lines)
-                filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                
-                if lines is not None:
-                    # 縦線かどうかの判定
-                    forward_list = detect_horizon_vertical(lines, LINE_TYPE.FORWARD)
-                    [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in forward_list]
-                    forward = True if len(forward_list)>=2 else False
-                    
-                    res_list = []
-                    
-                    # 縦線の上下の点に対応するxの値をロボット座標に変換したリスト
-                    for p in forward_list:
-                        point1 = image_to_robot_coordinate_transformation(lcam_params,p[0][0],p[0][1],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
-                        point2 = image_to_robot_coordinate_transformation(lcam_params,p[0][2],p[0][3],LINE_DETECTION_POINT_TO_CAMERA_DISTANCE)
-                        if point1>point2:
-                            res_list.append((point1,point2))
-                        else:
-                            res_list.append((point2,point1))
-                    
-                    # 下点のxについて昇順ソート
-                    res_list.sort(key=lambda x: x[0][0])
-                    if len(res_list)>=2:
-                        # 画像の中心に近い2本の線分のx座標の平均
-                        lower_x = (res_list[0][0][0]+res_list[1][0][0])/2
-                        upper_x = (res_list[0][1][0]+res_list[1][1][0])/2
-                        lower_y = (res_list[0][0][1]+res_list[1][0][1])/2
-                        upper_y = (res_list[0][1][1]+res_list[1][1][1])/2
-                        
-                        forward_theta = - np.pi/2 + np.arccos((upper_x - lower_x)/np.sqrt((upper_x - lower_x)**2+(upper_y - lower_y)**2))
-                        
-                    # 画像の右端に点がある線分のリスト
-                    right_list = [line for line in lines if line[0][0]<LINE_MARGIN or line[0][2]<LINE_MARGIN]
-                    # 横線かどうかの判定
-                    right_list = detect_horizon_vertical(lines, LINE_TYPE.RIGHT)
-                    [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in right_list]
-                    right = True if len(right_list)>=2 else False
-
-                    # 画像の左端に点がある線分のリスト
-                    left_list = [line for line in lines if line[0][0]>FRAME_WIDTH-LINE_MARGIN or line[0][2]>FRAME_WIDTH-LINE_MARGIN]
-                    # 横線かどうかの判定
-                    left_list = detect_horizon_vertical(lines,LINE_TYPE.LEFT)
-                    [cv2.line(filtered_frame,(p[0][0],p[0][1]),(p[0][2],p[0][3]),(0,255,0),3) for p in left_list]
-                    left = True if len(left_list)>=2 else False
-
-                blue = cv2.cvtColor(blue,cv2.COLOR_GRAY2BGR)
-                lumi = cv2.cvtColor(lumi,cv2.COLOR_GRAY2BGR)
-                line_show_frame = np.hstack((all_lines,blue,lumi,filtered_frame))
-                # キューに結果を入れる
-                output_data = (forward, right, left, lower_x, forward_theta)
-                q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
-                ###ライン検出ここまで###
-                
-                ###ボール検出ここから###
+                # 下部カメラから画像を読み込む
+                lcam_frame = q_lcam.get()
                 # 上部カメラから画像を読み込む
                 ucam_frame = q_ucam.get()
                 
+                # 出力画像にガウシアンフィルタを適用する。
+                blur = cv2.GaussianBlur(lcam_frame, ksize=(5,5),sigmaX=0)
+                
+                _, _, _, _, _, _, _, lower_bird_point = lcam_params
+                bird_frame = bird_perspective_transform(blur, lower_bird_point)
+                
+                # BGRのBを抽出
+                l_blue = bird_frame[:,:,0]
+                
+                # 上部カメラから画像を読み込む
+                ucam_frame = q_ucam.get()
+                
+                # 出力画像にガウシアンフィルタを適用する。
+                blur = cv2.GaussianBlur(ucam_frame, ksize=(5,5),sigmaX=0)
+                
+                _, _, _, _, _, _, _, upper_bird_point = ucam_params
+                bird_frame = bird_perspective_transform(blur, upper_bird_point)
+                
+                # BGRのBを抽出
+                u_blue = bird_frame[:,:,0]
+                
+                # HLS変換
+                #hls = cv2.cvtColor(bird_frame, cv2.COLOR_BGR2HLS_FULL)
+                
+                # 輝度が高い場所を取得
+                #lumi = cv2.inRange(hls,self.white_lower_mask,self.white_upper_mask)
+                
+                # blueとlumiのOR
+                #img_or = cv2.bitwise_or(blue, lumi)
+                
+                # HLS変換
+                #hls = cv2.cvtColor(bird_frame, cv2.COLOR_BGR2HLS_FULL)
+                
+                # 輝度が高い場所を取得
+                #lumi = cv2.inRange(hls,self.white_lower_mask,self.white_upper_mask)
+                
+                # blueとlumiのOR
+                #img_or = cv2.bitwise_or(blue, lumi)
+                
+                # ライン検出
+                lines = self.fld.detect(l_blue)
+
+                # image for debug
+                all_lines = self.fld.drawSegments(lcam_frame,lines)
+                l_filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
+                u_filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
+                        
+                if lines is not None:
+                    # 右線かどうかの判定
+                    (is_right) = detect_horizon_vertical(lines, LINE_TYPE.RIGHT,lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
+                    # 左線かどうかの判定
+                    (is_left) = detect_horizon_vertical(lines,LINE_TYPE.LEFT,lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
+                    # 縦線かどうかの判定
+                    (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(lines, LINE_TYPE.FORWARD, lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
+                    
+                    # 縦線が無ければ
+                    if not is_forward:
+                        # ライン検出
+                        lines = self.fld.detect(u_blue)
+
+                        # image for debug
+                        all_lines = self.fld.drawSegments(ucam_frame,lines)
+                        if lines is not None:
+                            # 右線かどうかの判定
+                            (is_right) = detect_horizon_vertical(lines, LINE_TYPE.RIGHT,ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, u_filtered_frame)
+                            # 左線かどうかの判定
+                            (is_left) = detect_horizon_vertical(lines,LINE_TYPE.LEFT,ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
+                            # 縦線かどうかの判定
+                            (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(lines, LINE_TYPE.FORWARD, ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
+                l_blue = cv2.cvtColor(l_blue,cv2.COLOR_GRAY2BGR)
+                l_line_show_frame = np.hstack((l_blue,l_filtered_frame))            
+                u_blue = cv2.cvtColor(u_blue,cv2.COLOR_GRAY2BGR)
+                u_line_show_frame = np.hstack((u_blue,u_filtered_frame))
+                line_show_frame = np.vstack((l_line_show_frame,u_line_show_frame))
+                # キューに結果を入れる
+                output_data = (is_forward, is_right, is_left, error_forward_x, error_forward_angle)
+                #q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
+                self.line_camera_out = output_data
+                
+                ###ライン検出ここまで###
+                
+                ###ボール検出ここから###
                 items = 0
                 paddy_rice_x = 0
                 paddy_rice_y = 0
                 paddy_rice_z = DETECTABLE_MAX_DIS
                 is_obtainable = False
-                
-                # 出力画像にガウシアンフィルタを適用する。
-                ucam_frame = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
-                lcam_frame = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
 
                 # カメラ画像をHSVに変換
                 ucam_hsv = cv2.cvtColor(ucam_frame, cv2.COLOR_BGR2HSV_FULL)
@@ -472,7 +555,8 @@ class DetectObj:
                 
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_out.put((ball_show_frame, OUTPUT_ID.BALL, output_data))
+                #q_out.put((ball_show_frame, OUTPUT_ID.BALL, output_data))
+                self.ball_camera_out = output_data
                 ###ボール検出ここまで###
             except KeyboardInterrupt:
                 break
@@ -524,7 +608,7 @@ class DetectObj:
                 
                 # キューに送信
                 output_data = (target_silo_x,target_silo_y,target_silo_z)
-                q_out.put((annotated_frame, OUTPUT_ID.SILO, output_data))
-                
+                #q_out.put((annotated_frame, OUTPUT_ID.SILO, output_data))
+                self.silo_camera_out = output_data
             except KeyboardInterrupt:
                 break
