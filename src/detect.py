@@ -481,7 +481,7 @@ class DetectObj:
                 line_show_frame = np.vstack((u_line_show_frame,l_line_show_frame))
                 # キューに結果を入れる
                 output_data = (is_forward, is_right, is_left, error_forward_x, error_forward_angle)
-                q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
+                #q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
                 self.line_camera_out = output_data
                 
                 ###ライン検出ここまで###
@@ -544,7 +544,7 @@ class DetectObj:
                 
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_out.put((ball_show_frame, OUTPUT_ID.BALL, output_data))
+                #q_out.put((ball_show_frame, OUTPUT_ID.BALL, output_data))
                 self.ball_camera_out = output_data
                 ###ボール検出ここまで###
             except KeyboardInterrupt:
@@ -597,7 +597,7 @@ class DetectObj:
                 
                 # キューに送信
                 output_data = (target_silo_x,target_silo_y,target_silo_z)
-                q_out.put((annotated_frame, OUTPUT_ID.SILO, output_data))
+                #q_out.put((annotated_frame, OUTPUT_ID.SILO, output_data))
                 self.silo_camera_out = output_data
             except KeyboardInterrupt:
                 break
