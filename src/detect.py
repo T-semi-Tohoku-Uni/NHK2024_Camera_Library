@@ -54,7 +54,7 @@ OBTAINABE_AREA_RADIUS = 80
 
 # カメラからラインの検出点までの距離[mm]
 LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 575
-UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 625
+UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 1000
 
 # 画像端から何ピクセル分の点までを、画像端から伸びてる線分とみなすか
 LINE_MARGIN = 30
@@ -252,8 +252,8 @@ def bird_to_robot_coordinate_transformation(cam_params,w,h,dis):
     """
     俯瞰からロボット座標に変換
     """
-    dst = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH,0],[0,0],[0,FRAME_HEIGHT]],dtype=np.float32)
-    (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,src) = cam_params
+    src = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH,0],[0,0],[0,FRAME_HEIGHT]],dtype=np.float32)
+    (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,dst) = cam_params
     M_inv = cv2.getPerspectiveTransform(src, dst)
     internal_param_inv = np.array([[1/focal_length, 0, 0], [0,1/focal_length, 0], [0, 0, 1] ,[0, 0, 1/dis]])
     external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), pos_x],
