@@ -45,12 +45,12 @@ LOWER_MIN_CONTOUR_AREA_THRESHOLD = 2000
 LOWER_CIRCULARITY_THRESHOLD=0.5
 
 # 上部カメラの円形度の閾値
-UPPER_CIRCULARITY_THRESHOLD=0.4
+UPPER_CIRCULARITY_THRESHOLD=0.3
 
 # ロボット座標におけるアームのファンで吸い込めるエリアの中心と半径[mm]
 OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Y = 550
-OBTAINABE_AREA_RADIUS = 80
+OBTAINABE_AREA_RADIUS = 60
 
 # カメラからラインの検出点までの距離[mm]
 LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 575
@@ -375,7 +375,7 @@ class DetectObj:
         # fast line detector
         self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=50,distance_threshold=1.41421356,canny_th1=50.0,canny_th2=200.0,canny_aperture_size=3,do_merge=True)
      
-        self.ball_camera_out = (0,0.0,0.0,0.0,False)
+        self.ball_camera_out = (0,0.0,0.0,DETECTABLE_MAX_DIS,False)
         self.silo_camera_out = (0.0,0.0,0.0)
         self.line_camera_out = (False,False,False,0.0,0.0)
         
@@ -420,14 +420,13 @@ class DetectObj:
                 
                 # 下部カメラから画像を読み込む
                 lcam_frame = q_lcam.get()
-                # 上部カメラから画像を読み込む
-                ucam_frame = q_ucam.get()
+                
                 
                 # 出力画像にガウシアンフィルタを適用する。
-                blur = cv2.GaussianBlur(lcam_frame, ksize=(5,5),sigmaX=0)
+                lcam_blur = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
                 
                 _, _, _, _, _, _, _, lower_bird_point = lcam_params
-                bird_frame = bird_perspective_transform(blur, lower_bird_point)
+                bird_frame = bird_perspective_transform(lcam_blur, lower_bird_point)
                 
                 # BGRのBを抽出
                 l_blue = bird_frame[:,:,0]
@@ -436,10 +435,10 @@ class DetectObj:
                 ucam_frame = q_ucam.get()
                 
                 # 出力画像にガウシアンフィルタを適用する。
-                blur = cv2.GaussianBlur(ucam_frame, ksize=(5,5),sigmaX=0)
+                ucam_blur = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
                 
                 _, _, _, _, _, _, _, upper_bird_point = ucam_params
-                bird_frame = bird_perspective_transform(blur, upper_bird_point)
+                bird_frame = bird_perspective_transform(ucam_blur, upper_bird_point)
                 
                 # BGRのBを抽出
                 u_blue = bird_frame[:,:,0]
@@ -466,7 +465,7 @@ class DetectObj:
                 lines = self.fld.detect(l_blue)
 
                 # image for debug
-                all_lines = self.fld.drawSegments(lcam_frame,lines)
+                #all_lines = self.fld.drawSegments(lcam_frame,lines)
                 l_filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
                 u_filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
                         
@@ -484,7 +483,7 @@ class DetectObj:
                         lines = self.fld.detect(u_blue)
 
                         # image for debug
-                        all_lines = self.fld.drawSegments(ucam_frame,lines)
+                        #all_lines = self.fld.drawSegments(ucam_frame,lines)
                         if lines is not None:
                             # 右線かどうかの判定
                             (is_right) = detect_horizon_vertical(lines, LINE_TYPE.RIGHT,ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, u_filtered_frame)
@@ -512,8 +511,8 @@ class DetectObj:
                 is_obtainable = False
 
                 # カメラ画像をHSVに変換
-                ucam_hsv = cv2.cvtColor(ucam_frame, cv2.COLOR_BGR2HSV_FULL)
-                lcam_hsv = cv2.cvtColor(lcam_frame, cv2.COLOR_BGR2HSV_FULL)
+                ucam_hsv = cv2.cvtColor(ucam_blur, cv2.COLOR_BGR2HSV_FULL)
+                lcam_hsv = cv2.cvtColor(lcam_blur, cv2.COLOR_BGR2HSV_FULL)
 
                 # 閾値でmasking処理
                 ucam_mask = cv2.inRange(ucam_hsv,self.blue_lower_mask,self.blue_upper_mask)
