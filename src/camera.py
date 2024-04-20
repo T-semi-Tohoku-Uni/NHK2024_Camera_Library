@@ -166,11 +166,12 @@ class UpperCamera:
             return False, None, None
 
     def write(self, frame):
-        self.output_file.write(frame)
+        # self.output_file.write(frame)
+        pass
         
     def release(self):
         self.pipeline.stop()
-        self.output_file.release()
+        # self.output_file.release()
         print(f"UpperCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")
     
@@ -243,11 +244,12 @@ class LowerCamera:
         return ret, frame, None
     
     def write(self, frame):
-        self.output_file.write(frame)
+        # self.output_file.write(frame)
+        pass
 
     def release(self):
         self.cap.release()
-        self.output_file.release()
+        # self.output_file.release()
         print(f"LowerCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Capturing Device")
     
@@ -346,11 +348,12 @@ class RearCamera:
             return False, None, None
 
     def write(self, frame):
-        self.output_file.write(frame)
+        # self.output_file.write(frame)
+        pass
         
     def release(self):
         self.pipeline.stop()
-        self.output_file.release()
+        # self.output_file.release()
         print(f"RearCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")
     
