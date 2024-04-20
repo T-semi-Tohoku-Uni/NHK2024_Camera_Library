@@ -4,6 +4,7 @@ import pyrealsense2 as rs
 import subprocess
 from enum import Enum
 import time
+import datetime
 
 # カメラからの画像の幅と高さ[pxl]
 FRAME_WIDTH = 320
@@ -74,10 +75,7 @@ def usb_video_device(port : int):
         return
 
 class UpperCamera:
-    def __init__(self):
-        connected_devices = rs.context().query_devices()
-        serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in connected_devices]
-        print(f"{serial_number_list=}")
+    def __init__(self, timestamp):
         try:
             # Configure depth and color streams
             self.pipeline = rs.pipeline()
@@ -116,6 +114,9 @@ class UpperCamera:
             print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
         
+            #output_filename = f"{timestamp}_UpperCamera.mp4"
+            #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            #self.output_file = cv2.VideoWriter(output_filename,fourcc,FPS,(FRAME_WIDTH*2,FRAME_HEIGHT*2))
         except Exception as e:
             print(e)
             print(f"realsense{FRONT_UPPER_REALSENSE_SERIAL_NUMBER} not connected")
@@ -164,8 +165,12 @@ class UpperCamera:
         except:
             return False, None, None
 
+    def write(self, frame):
+        self.output_file.write(frame)
+        
     def release(self):
         self.pipeline.stop()
+        self.output_file.release()
         print(f"UpperCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")
     
@@ -173,9 +178,9 @@ class UpperCamera:
         connected_devices = rs.context().query_devices()
         serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in connected_devices]
         return True if FRONT_UPPER_REALSENSE_SERIAL_NUMBER in serial_number_list else False
-
+        
 class LowerCamera:
-    def __init__(self, id=None):
+    def __init__(self, timestamp, id=None):
         if id is not None:
             device_id = id
         else:
@@ -227,14 +232,22 @@ class LowerCamera:
         self.counter = 0
         self.start_time = time.time()
         
+        #output_filename = f"{timestamp}_LowerCamera.mp4"
+        #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        #self.output_file = cv2.VideoWriter(output_filename,fourcc,FPS,(FRAME_WIDTH*2,FRAME_HEIGHT*2))
+        
     def read(self):
         ret, frame = self.cap.read()
         self.counter += 1
         # Noneはダミー（デプスがある時と同じ引数の数にするため）
         return ret, frame, None
+    
+    def write(self, frame):
+        self.output_file.write(frame)
 
     def release(self):
         self.cap.release()
+        self.output_file.release()
         print(f"LowerCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Capturing Device")
     
@@ -243,7 +256,7 @@ class LowerCamera:
     
 
 class RearCamera:
-    def __init__(self):
+    def __init__(self, timestamp):
         try:
             # Configure depth and color streams
             self.pipeline = rs.pipeline()
@@ -281,6 +294,10 @@ class RearCamera:
             print(f"{rgb_camera_sensor.get_option(rs.option.brightness)=}")
             print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
+        
+            #output_filename = f"{timestamp}_RearCamera.mp4"
+            #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            #self.output_file = cv2.VideoWriter(output_filename,fourcc,FPS,(FRAME_WIDTH,FRAME_HEIGHT))
         except Exception as e:
             print(e)
             print(f"realsense{REAR_REALSENSE_SERIAL_NUMBER} not connected")
@@ -328,8 +345,12 @@ class RearCamera:
         except:
             return False, None, None
 
+    def write(self, frame):
+        self.output_file.write(frame)
+        
     def release(self):
         self.pipeline.stop()
+        self.output_file.release()
         print(f"RearCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")
     

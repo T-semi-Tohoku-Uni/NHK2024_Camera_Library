@@ -260,9 +260,17 @@ def bird_to_robot_coordinate_transformation(cam_params,w,h,dis):
                         [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), pos_z],
                         [0, 0, 0, 1]])
     # Opencvの座標でいう(FRAME_WIDTH/2, FRAME_HEIGHT/2)が(0,0)になるよう平行移動
-    Target = np.array([[(w-FRAME_WIDTH/2)*dis], [(-h+FRAME_HEIGHT/2)*dis], [dis]])
+    Target = np.array([[(w-FRAME_WIDTH/2)], [(-h+FRAME_HEIGHT/2)], [1]])
     
-    coordinate = external_param @ internal_param_inv @ M_inv @ Target 
+    Target = np.array([[1/FRAME_WIDTH,0,0],[1/FRAME_HEIGHT,0,0],[0,0,1]]) @ Target
+    
+    inv_x = 320*Target[0][0] + 480*Target[0][1] + 320
+    inv_y = 480*Target[0][1] + 240
+    inv_z = 3 * Target[0][1]
+    
+    Target_from_View = np.array([[inv_x*dis],[inv_y*dis],[inv_z*dis]])
+    
+    coordinate = external_param @ internal_param_inv @ M_inv @ Target_from_View 
     
     # 水平方向のみ返す
     return int(coordinate[0,0])
@@ -294,7 +302,7 @@ def detect_horizon_vertical(original_line_list, line_type, cam_param, line_detec
     output = ()
     
     if line_type == LINE_TYPE.FORWARD:
-        # 角度を基に縦線を求める  
+        # 角度を基に縦線を求める
         filtered_line_list = [line for line in original_line_list if abs(np.pi/2-np.arccos(abs(line[0][0]-line[0][2])/np.sqrt((abs(line[0][0]-line[0][2])**2+abs(line[0][1]-line[0][3])**2))))<LINE_SLOPE_THRESHOLD]
         filtered_line_list = [line.astype(int) for line in filtered_line_list]
         # デバッグ用
@@ -320,6 +328,7 @@ def detect_horizon_vertical(original_line_list, line_type, cam_param, line_detec
             upper_x = (forward_list[0][1][0]+forward_list[1][1][0])/2
             lower_y = (forward_list[0][0][1]+forward_list[1][0][1])/2
             upper_y = (forward_list[0][1][1]+forward_list[1][1][1])/2
+            [cv2.drawMarker(result_frame,(int(lower_x),int(lower_y)),(255,255,0)) for p in filtered_line_list]
         
             error_forward_angle = - np.pi/2 + np.arccos((upper_x - lower_x)/np.sqrt((upper_x - lower_x)**2+(upper_y - lower_y)**2))
             error_forward_x = bird_to_robot_coordinate_transformation(cam_param,lower_x,lower_y,line_detection_point_to_camera_distance) 
@@ -361,7 +370,7 @@ class DetectObj:
         
         # maskの値を設定する
         self.blue_lower_mask = np.array([138, 20, 20])
-        self.blue_upper_mask = np.array([165, 255, 255])
+        self.blue_upper_mask = np.array([163, 255, 255])
         self.purple_lower_mask = np.array([165,40,40])
         self.purple_upper_mask = np.array([230,250,250])
         self.red_lower_mask_1 = np.array([0,40,40])
@@ -372,11 +381,16 @@ class DetectObj:
         self.white_upper_mask = np.array([255,255,255])
         
         # fast line detector
-        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=10,distance_threshold=1.41421356,canny_th1=150.0,canny_th2=180.0,canny_aperture_size=3,do_merge=True)
+        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=50,distance_threshold=1.41421356,canny_th1=150.0,canny_th2=180.0,canny_aperture_size=3,do_merge=True)
      
         self.ball_camera_out = (0,0.0,0.0,DETECTABLE_MAX_DIS,False)
         self.silo_camera_out = (0.0,0.0,0.0)
         self.line_camera_out = (False,False,False,0.0,0.0)
+        
+        # 画像表示するかどうか（q_outに画像とidを入れる
+        self.show = False
+        # 動画保存するかどうか
+        self.save_movie = False
         
     # 画像を取得してキューに入れる
     def capturing(self, q_frames, cap):
@@ -402,7 +416,7 @@ class DetectObj:
                 break
                 
     # 前方カメラでライン検出，ボール検出（閾値によるマスキング）を行う
-    def detecting_front(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
+    def detecting_front(self,ucam,lcam,rcam,q_ucam,q_lcam,q_rcam,q_out):
         while True:
             try:
                 ###ライン検出ここから###
@@ -423,7 +437,7 @@ class DetectObj:
                 # Gaussian Blur
                 lcam_line_blur = cv2.GaussianBlur(lcam_frame, ksize=(3,3),sigmaX=0)
                 
-                _, _, _, _, _, _, _, lower_bird_point = lcam_params
+                _, _, _, _, _, _, _, lower_bird_point = lcam.params
                 bird_frame = bird_perspective_transform(lcam_line_blur, lower_bird_point)
                 
                 # BGRのBを抽出
@@ -441,7 +455,7 @@ class DetectObj:
                 # Gaussian Blur
                 ucam_line_blur = cv2.GaussianBlur(ucam_frame, ksize=(3,3),sigmaX=0)
                 
-                _, _, _, _, _, _, _, upper_bird_point = ucam_params
+                _, _, _, _, _, _, _, upper_bird_point = ucam.params
                 bird_frame = bird_perspective_transform(ucam_line_blur, upper_bird_point)
                 
                 # BGRのBを抽出
@@ -458,29 +472,31 @@ class DetectObj:
                         
                 if l_lines is not None:
                     # 右線かどうかの判定
-                    (is_right) = detect_horizon_vertical(l_lines, LINE_TYPE.RIGHT,lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
+                    (is_right) = detect_horizon_vertical(l_lines, LINE_TYPE.RIGHT,lcam.params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
                     # 左線かどうかの判定
-                    (is_left) = detect_horizon_vertical(l_lines,LINE_TYPE.LEFT,lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
+                    (is_left) = detect_horizon_vertical(l_lines,LINE_TYPE.LEFT,lcam.params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
                     # 縦線かどうかの判定
-                    (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(l_lines, LINE_TYPE.FORWARD, lcam_params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
+                    (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(l_lines, LINE_TYPE.FORWARD, lcam.params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
                     
                     # 縦線が無ければ
                     if not is_forward:
                         if u_lines is not None:
                             # 右線かどうかの判定
-                            (is_right) = detect_horizon_vertical(u_lines, LINE_TYPE.RIGHT,ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, u_filtered_frame)
+                            (is_right) = detect_horizon_vertical(u_lines, LINE_TYPE.RIGHT,ucam.params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, u_filtered_frame)
                             # 左線かどうかの判定
-                            (is_left) = detect_horizon_vertical(u_lines,LINE_TYPE.LEFT,ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
+                            (is_left) = detect_horizon_vertical(u_lines,LINE_TYPE.LEFT,ucam.params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
                             # 縦線かどうかの判定
-                            (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(u_lines, LINE_TYPE.FORWARD, ucam_params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
+                            (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(u_lines, LINE_TYPE.FORWARD, ucam.params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
                 l_blue = cv2.cvtColor(l_blue,cv2.COLOR_GRAY2BGR)
-                l_line_show_frame = np.hstack((l_all_lines,l_blue,l_filtered_frame))            
+                l_line_show_frame = np.hstack((l_blue,l_filtered_frame))            
                 u_blue = cv2.cvtColor(u_blue,cv2.COLOR_GRAY2BGR)
-                u_line_show_frame = np.hstack((u_all_lines,u_blue,u_filtered_frame))
-                line_show_frame = np.vstack((u_line_show_frame,l_line_show_frame))
-                # キューに結果を入れる
+                u_line_show_frame = np.hstack((u_blue,u_filtered_frame))
+                show = np.vstack((u_line_show_frame,l_line_show_frame))
+                
                 output_data = (is_forward, is_right, is_left, error_forward_x, error_forward_angle)
-                #q_out.put((line_show_frame, OUTPUT_ID.LINE, output_data))
+                
+                if self.show:
+                    q_out.put((show, OUTPUT_ID.LINE))
                 self.line_camera_out = output_data
                 
                 ###ライン検出ここまで###
@@ -516,7 +532,7 @@ class DetectObj:
                     # 返り値の更新
                     items = len(circles)
                     target = circles.index(max(circles, key=lambda x:x[1]))
-                    (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                    (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
                     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                 # もし下部カメラで円が検出されなければ
                 else:
@@ -533,24 +549,31 @@ class DetectObj:
                         # 返り値の更新
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam_params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
                         is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                         
                 # 画像のタイプを揃える
                 ucam_close = cv2.cvtColor(ucam_close,cv2.COLOR_GRAY2BGR)
                 lcam_close = cv2.cvtColor(lcam_close,cv2.COLOR_GRAY2BGR)
-                ball_show_frame = np.vstack((np.hstack((ucam_ball_blur,ucam_close)),np.hstack((lcam_ball_blur,lcam_close))))
+                u_ball_show_frame = np.hstack((ucam_ball_blur,ucam_close))
+                l_ball_show_frame = np.hstack((lcam_ball_blur,lcam_close))
                 
-                # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+                # (xは水平，yは奥行方向)
                 output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                #q_out.put((ball_show_frame, OUTPUT_ID.BALL, output_data))
+                if self.show:
+                    show = np.vstack((u_ball_show_frame,l_ball_show_frame))
+                    q_out.put((show, OUTPUT_ID.BALL))
+                if self.save_movie:
+                    lcam.write(np.vstack((l_line_show_frame,l_ball_show_frame)))
+                    ucam.write(np.vstack((u_line_show_frame,u_ball_show_frame)))
+                
                 self.ball_camera_out = output_data
                 ###ボール検出ここまで###
             except KeyboardInterrupt:
                 break
             
     # 後方カメラでサイロを監視
-    def detecting_rear(self,ucam_params,lcam_params,rcam_params,q_ucam,q_lcam,q_rcam,q_out):
+    def detecting_rear(self,ucam,lcam,rcam,q_ucam,q_lcam,q_rcam,q_out):
         while True:
             try:
                 frame = q_rcam.get()
@@ -591,12 +614,14 @@ class DetectObj:
                         w = (x1+x2)/2
                         h = (y1+y2)/2
                         dis = calc_distance(abs(y1-y2),SILO_HEIGHT)
-                        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(rcam_params,w,h,dis)
+                        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(rcam.params,w,h,dis)
                         maximum_my_ball_in_silo_count = my_ball_in_silo_counter
                 
-                # キューに送信
                 output_data = (target_silo_x,target_silo_y,target_silo_z)
-                #q_out.put((annotated_frame, OUTPUT_ID.SILO, output_data))
+                if self.show:
+                    q_out.put((annotated_frame, OUTPUT_ID.SILO))
+                if self.save_movie:
+                    rcam.write(annotated_frame)
                 self.silo_camera_out = output_data
             except KeyboardInterrupt:
                 break
