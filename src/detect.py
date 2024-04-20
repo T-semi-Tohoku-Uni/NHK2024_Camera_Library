@@ -270,7 +270,7 @@ def bird_to_robot_coordinate_transformation(cam_params,w,h,dis):
     
     Target_from_View = np.array([[inv_x*dis],[inv_y*dis],[inv_z*dis]])
     
-    coordinate = external_param @ internal_param_inv @ M_inv @ Target_from_View 
+    coordinate = external_param @ internal_param_inv @ Target_from_View 
     
     # 水平方向のみ返す
     return int(coordinate[0,0])
