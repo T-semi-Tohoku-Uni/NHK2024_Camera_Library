@@ -226,7 +226,7 @@ def find_circle_contours(mask_img, min_contour_area_threshold, circularity_thres
     Returns
     -------
     circles : list
-        円の輪郭情報のリスト
+        円の中心，半径の情報のリスト
     """
     contours = []
     circles = []
@@ -460,12 +460,8 @@ class DetectObj:
                 # 下部カメラから画像を読み込む
                 lcam_frame = q_lcam.get()
                 
-                # Gaussian Blur
-                #lcam_line_blur = cv2.GaussianBlur(lcam_frame, ksize=(3,3),sigmaX=0)
-                lcam_line_blur = lcam_frame
-                
                 _, _, _, _, _, _, _, lower_bird_point = lcam.params
-                bird_frame = bird_perspective_transform(lcam_line_blur, lower_bird_point)
+                bird_frame = bird_perspective_transform(lcam_frame, lower_bird_point)
                 
                 # BGRのBを抽出
                 l_blue = bird_frame[:,:,0]
@@ -479,12 +475,8 @@ class DetectObj:
                 # 上部カメラから画像を読み込む
                 ucam_frame = q_ucam.get()
                 
-                # Gaussian Blur
-                #ucam_line_blur = cv2.GaussianBlur(ucam_frame, ksize=(3,3),sigmaX=0)
-                ucam_line_blur = ucam_frame
-                 
                 _, _, _, _, _, _, _, upper_bird_point = ucam.params
-                bird_frame = bird_perspective_transform(ucam_line_blur, upper_bird_point)
+                bird_frame = bird_perspective_transform(ucam_frame, upper_bird_point)
                 
                 # BGRのBを抽出
                 u_blue = bird_frame[:,:,0]
@@ -578,7 +570,7 @@ class DetectObj:
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
                         (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
-                        is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+                        is_obtainable = False
                         
                 # 画像のタイプを揃える
                 ucam_close = cv2.cvtColor(ucam_close,cv2.COLOR_GRAY2BGR)
