@@ -3,10 +3,10 @@ import cv2
 from src import MainProcess,OUTPUT_ID
 
 if __name__ == "__main__":
-    lib_path = '.'
+    model_path = 'models/20240109best.pt'
     
     # メインプロセスを実行するクラス
-    mainprocess = MainProcess(lib_path,True,False)
+    mainprocess = MainProcess(model_path)
     
     # マルチスレッドの実行
     mainprocess.thread_start()

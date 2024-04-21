@@ -136,7 +136,7 @@ class UpperCamera:
         theta_z = 0
         
         # 俯瞰画像にする領域のマージン
-        UPPER_MERGIN = 120
+        UPPER_MERGIN = 110
         upper_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-UPPER_MERGIN,FRAME_HEIGHT/2],[UPPER_MERGIN,FRAME_HEIGHT/2],[0,FRAME_HEIGHT]], dtype=np.float32)
         
         self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,upper_bird_point)
@@ -165,9 +165,8 @@ class UpperCamera:
         except:
             return False, None, None
 
-    def write(self, frame):
+    #def write(self, frame):
         # self.output_file.write(frame)
-        pass
         
     def release(self):
         self.pipeline.stop()
@@ -224,7 +223,7 @@ class LowerCamera:
         theta_y = 0
         theta_z = 0
         
-        LOWER_MERGIN = 105
+        LOWER_MERGIN = 100
         lower_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-LOWER_MERGIN,0],[LOWER_MERGIN,0],[0,FRAME_HEIGHT]], dtype=np.float32)
         
         self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,lower_bird_point)
@@ -243,9 +242,8 @@ class LowerCamera:
         # Noneはダミー（デプスがある時と同じ引数の数にするため）
         return ret, frame, None
     
-    def write(self, frame):
+    #def write(self, frame):
         # self.output_file.write(frame)
-        pass
 
     def release(self):
         self.cap.release()
@@ -318,7 +316,7 @@ class RearCamera:
         theta_y = 0
         theta_z = 0
         
-        REAR_MERGIN = 120
+        REAR_MERGIN = 110
         rear_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-REAR_MERGIN,FRAME_HEIGHT/2],[REAR_MERGIN,FRAME_HEIGHT/2],[0,FRAME_HEIGHT]], dtype=np.float32)
         
         self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,rear_bird_point)
@@ -347,9 +345,8 @@ class RearCamera:
         except:
             return False, None, None
 
-    def write(self, frame):
+    #def write(self, frame):
         # self.output_file.write(frame)
-        pass
         
     def release(self):
         self.pipeline.stop()

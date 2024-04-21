@@ -7,13 +7,13 @@ from .camera import UpperCamera,LowerCamera,RearCamera
 from .detect import DetectObj, OUTPUT_ID
 
 class MainProcess:
-    def __init__(self,lib_path='/home/pi/NHK2024/NHK2024_R2_Raspi/src/NHK2024_Camera_Library', show=False, save_movie=False):
+    def __init__(self,model_path='/home/pi/NHK2024/NHK2024_R2_Raspi/src/NHK2024_Camera_Library/models/20240109best.pt', show=False, save_movie=False):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f")[:-3]
-        self.ucam = UpperCamera(f"{lib_path}/camlogs/{timestamp}")
-        self.lcam = LowerCamera(f"{lib_path}/camlogs/{timestamp}")
-        self.rcam = RearCamera(f"{lib_path}/camlogs/{timestamp}")
+        self.ucam = UpperCamera(f"{timestamp}")
+        self.lcam = LowerCamera(f"{timestamp}")
+        self.rcam = RearCamera(f"{timestamp}")
         #self.detector = DetectObj(f"{lib_path}/models/20240109best.pt")
-        self.detector = DetectObj(lib_path)
+        self.detector = DetectObj(model_path)
 
 
         self.thread_upper_capture = threading.Thread()

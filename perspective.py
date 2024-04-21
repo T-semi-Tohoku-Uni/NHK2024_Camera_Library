@@ -7,9 +7,9 @@ import datetime
 from ultralytics import YOLO
 from src import OUTPUT_ID,UpperCamera,LowerCamera,RearCamera,DetectObj
 # mergin80, h*2/3
-U_MERGIN = 120
-L_MERGIN = 105
-R_MERGIN = 120
+U_MERGIN = 110
+L_MERGIN = 100
+R_MERGIN = 110
 W=320
 H=240
 
@@ -17,34 +17,82 @@ def perspective_transform(q_in, q_out, point, id):
     while True:
         try:
             frame = q_in.get()
-            x1 = point[0][0]
-            x2 = point[1][0]
-            x3 = point[2][0]
-            x4 = point[3][0]
+            src = point
             dst = np.array([[W,H],[W,0],[0,0],[0,H]],dtype=np.float32)
             M = cv2.getPerspectiveTransform(src, dst)
-            M_inv = cv2.getPerspectiveTransform(dst,src)
             result = cv2.warpPerspective(frame,M,(W,H),flags=(cv2.INTER_LINEAR))
             
-            cv2.drawMarker(frame,(int(point[0][0]),int(point[0][1])),(255,0,255))
-            print(f"{M=}")
-            x,y,_ = M_inv @ np.array([int(point[0][0]),int(point[0][1]),1])
-            cv2.drawMarker(frame,(int(x),int(y)),(255,255,0))
-            print(f"[W],[H]:{x=},{y=}")
-            x,y,_ = M_inv @ np.array([int(point[1][0]),int(point[1][1]),1])
-            cv2.drawMarker(frame,(int(x),int(y)),(255,255,0))
-            print(f"[W],[0]:{x=},{y=}")
-            x,y,_ = M_inv @ np.array([int(point[2][0]),int(point[2][1]),1])
-            cv2.drawMarker(frame,(int(x),int(y)),(255,255,0))
-            print(f"[0],[0]:{x=},{y=}")
-            x,y,_ = M_inv @ np.array([int(point[3][0]),int(point[3][1]),1])
-            cv2.drawMarker(frame,(int(x),int(y)),(255,255,0))
-            print(f"[0],[H]:{x=},{y=}")
-            #M_inv = cv2.getPerspectiveTransform(dst,src)
+            # 順番を変更し，かつopencv座標から左手座標へ
+            x1 = point[3][0]
+            x2 = point[0][0]
+            x3 = point[2][0]
+            x4 = point[1][0]
+            y1 = H-point[3][1]
+            y2 = H-point[0][1]
+            y3 = H-point[2][1]
+            y4 = H-point[1][1]
             
+            # 係数求める
+            c = x1
+            f = y1
+            h= ((x1-x2-x3+x4)*(y4-y2)-(y1-y2-y3+y4)*(x4-x2))/((x4-x2)*(y4-y3)-(x4-x3)*(y4-y2))
+            g= (-x1+x2+x3-x4-(x4-x3)*h)/(x4-x2)
+            a=(g+1)*x2-x1
+            d=(g+1)*y2-y1
+            b=(h+1)*x3-x1
+            e=(h+1)*y3-y1
             
-            #inv_x,inv_y,_ = M_inv @ np.array([point[1][0],point[1][1],1])
-            #cv2.drawMarker(frame,(int(inv_x),int(inv_y)),(255,255,0))
+            # 1
+            target_x = W
+            target_y = H
+            # opencv座標から左手座標にし，単位正方形に変換
+            target_x = target_x/W
+            target_y = (H-target_y)/H
+            # 射影変換して，左手座標からopencvに変換
+            inv_x = (a*target_x+b*target_y+c)/(g*target_x+h*target_y+1)
+            inv_y = H-(d*target_x+e*target_y+f)/(g*target_x+h*target_y+1)
+            # debug
+            cv2.drawMarker(frame,(int(inv_x),int(inv_y)),(255,255,0))
+            print(f"[W],[H]:{inv_x=},{inv_y=}")
+            
+            # 2
+            target_x = W
+            target_y = 0
+            # opencv座標から左手座標にし，単位正方形に変換
+            target_x = target_x/W
+            target_y = (H-target_y)/H
+            # 射影変換して，左手座標からopencvに変換
+            inv_x = (a*target_x+b*target_y+c)/(g*target_x+h*target_y+1)
+            inv_y = H-(d*target_x+e*target_y+f)/(g*target_x+h*target_y+1)
+            # debug
+            cv2.drawMarker(frame,(int(inv_x),int(inv_y)),(255,255,0))
+            print(f"[W],[0]:{inv_x=},{inv_y=}")
+            
+            # 3
+            target_x = 0
+            target_y = H
+            # opencv座標から左手座標にし，単位正方形に変換
+            target_x = target_x/W
+            target_y = (H-target_y)/H
+            # 射影変換して，左手座標からopencvに変換
+            inv_x = (a*target_x+b*target_y+c)/(g*target_x+h*target_y+1)
+            inv_y = H-(d*target_x+e*target_y+f)/(g*target_x+h*target_y+1)
+            # debug
+            cv2.drawMarker(frame,(int(inv_x),int(inv_y)),(255,255,0))
+            print(f"[0],[H]:{inv_x=},{inv_y=}")
+            
+            # 4
+            target_x = 0
+            target_y = 0
+            # opencv座標から左手座標にし，単位正方形に変換
+            target_x = target_x/W
+            target_y = (H-target_y)/H
+            # 射影変換して，左手座標からopencvに変換
+            inv_x = (a*target_x+b*target_y+c)/(g*target_x+h*target_y+1)
+            inv_y = H-(d*target_x+e*target_y+f)/(g*target_x+h*target_y+1)
+            # debug
+            cv2.drawMarker(frame,(int(inv_x),int(inv_y)),(255,255,0))
+            print(f"[0],[0]:{inv_x=},{inv_y=}")
             
             q_out.put((frame,result, id, point))
         except KeyboardInterrupt:
@@ -86,11 +134,11 @@ class MainProcessForPerspective:
         self.thread_rear_detector = threading.Thread(target=perspective_transform, args=(self.q_rear_in, self.q_out, self.rear_point, "rear") ,daemon=True)
         
         self.thread_upper_capture.start()
-        #self.thread_lower_capture.start()
-        #self.thread_rear_capture.start()
+        self.thread_lower_capture.start()
+        self.thread_rear_capture.start()
         self.thread_upper_detector.start()
-        #self.thread_lower_detector.start()
-        #self.thread_rear_detector.start()
+        self.thread_lower_detector.start()
+        self.thread_rear_detector.start()
         
     # キューを空にする
     def terminate_queue(self):
