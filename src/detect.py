@@ -527,19 +527,38 @@ class DetectObj:
                 paddy_rice_y = 0
                 paddy_rice_z = DETECTABLE_MAX_DIS
                 is_obtainable = False
-
-                ucam_ball_blur = cv2.GaussianBlur(ucam_frame, ksize=(7,7),sigmaX=0)
-                lcam_ball_blur = cv2.GaussianBlur(lcam_frame, ksize=(7,7),sigmaX=0)
+                
+                # gray
+                ucam_ball_gray = cv2.cvtColor(ucam_frame,cv2.COLOR_BGR2GRAY)
+                lcam_ball_gray = cv2.cvtColor(lcam_frame,cv2.COLOR_BGR2GRAY)
+                
+                # cannyでエッジ検出
+                ucam_canny = cv2.Canny(ucam_ball_gray,300,300)
+                lcam_canny = cv2.Canny(lcam_ball_gray,300,300)
+                
+                # 膨張
+                ucam_dilate = cv2.dilate(ucam_canny,cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
+                lcam_dilate = cv2.dilate(lcam_canny,cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
+                
+                # 画像のタイプを揃える
+                ucam_dilate = cv2.cvtColor(ucam_dilate,cv2.COLOR_GRAY2BGR)
+                lcam_dilate = cv2.cvtColor(lcam_dilate,cv2.COLOR_GRAY2BGR)
+                # gradとframeの和を取る
+                ucam_combine = cv2.bitwise_or(ucam_frame,ucam_dilate)
+                lcam_combine = cv2.bitwise_or(lcam_frame,lcam_dilate)
+                
+                # blur
+                ucam_ball_blur = cv2.GaussianBlur(ucam_combine, ksize=(7,7),sigmaX=0)
+                lcam_ball_blur = cv2.GaussianBlur(lcam_combine, ksize=(7,7),sigmaX=0)
                 
                 # カメラ画像をHSVに変換
                 ucam_hsv = cv2.cvtColor(ucam_ball_blur, cv2.COLOR_BGR2HSV_FULL)
                 lcam_hsv = cv2.cvtColor(lcam_ball_blur, cv2.COLOR_BGR2HSV_FULL)
-
+                
                 # 閾値でmasking処理
                 ucam_mask = cv2.inRange(ucam_hsv,self.blue_lower_mask,self.blue_upper_mask)
                 lcam_mask = cv2.inRange(lcam_hsv,self.blue_lower_mask,self.blue_upper_mask)
                 
-                # モルフォロジー変換でクロージング処理
                 ucam_close = cv2.morphologyEx(ucam_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
                 lcam_close = cv2.morphologyEx(lcam_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
                 
@@ -573,6 +592,11 @@ class DetectObj:
                         is_obtainable = False
                         
                 # 画像のタイプを揃える
+                ucam_canny = cv2.cvtColor(ucam_canny,cv2.COLOR_GRAY2BGR)
+                lcam_canny = cv2.cvtColor(lcam_canny,cv2.COLOR_GRAY2BGR)
+                
+                #ucam_combine = cv2.cvtColor(ucam_combine,cv2.COLOR_GRAY2BGR)
+                #lcam_combine = cv2.cvtColor(lcam_combine,cv2.COLOR_GRAY2BGR)
                 ucam_close = cv2.cvtColor(ucam_close,cv2.COLOR_GRAY2BGR)
                 lcam_close = cv2.cvtColor(lcam_close,cv2.COLOR_GRAY2BGR)
                 u_ball_show_frame = np.hstack((ucam_ball_blur,ucam_close))
