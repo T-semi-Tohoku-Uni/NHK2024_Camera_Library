@@ -398,7 +398,7 @@ class DetectObj:
         self.model = YOLO(model_path)
         
         # maskの値を設定する
-        self.blue_lower_mask = np.array([138, 5, 20])
+        self.blue_lower_mask = np.array([138, 0, 20])
         self.blue_upper_mask = np.array([163, 255, 255])
         self.purple_lower_mask = np.array([165,40,40])
         self.purple_upper_mask = np.array([230,250,250])
