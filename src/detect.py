@@ -34,6 +34,9 @@ SILO_HEIGHT = 425.0
 # 検出可能最大距離[mm]
 DETECTABLE_MAX_DIS = 10000.0
 
+# 上部カメラでボール検出した時のYの固定値[mm]
+UPPER_STATIC_Y = 1000
+
 # 検出した輪郭の最小面積(上部のカメラ)[pxl]
 UPPER_MIN_CONTOUR_AREA_THRESHOLD = 180
 
@@ -569,7 +572,8 @@ class DetectObj:
                         # 返り値の更新
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                        (paddy_rice_x,_,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                        paddy_rice_y = UPPER_STATIC_Y
                         is_obtainable = False
                         
                 # 画像のタイプを揃える
