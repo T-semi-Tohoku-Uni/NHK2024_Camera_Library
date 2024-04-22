@@ -55,6 +55,9 @@ OBTAINABE_AREA_RADIUS = 80
 LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 990
 UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 990
 
+# 上部カメラでボール検出した時のY[mm]
+UPPER_STATIC_Y = 1000
+
 # 画像端から何ピクセル分の点までを、画像端から伸びてる線分とみなすか
 LINE_MARGIN = 30
 
@@ -588,7 +591,8 @@ class DetectObj:
                         # 返り値の更新
                         items = len(circles)
                         target = circles.index(max(circles, key=lambda x:x[1]))
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                        (paddy_rice_x,_,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
+                        paddy_rice_y = UPPER_STATIC_Y
                         is_obtainable = False
                         
                 # 画像のタイプを揃える
