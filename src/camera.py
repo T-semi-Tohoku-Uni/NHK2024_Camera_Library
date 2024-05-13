@@ -4,6 +4,7 @@ import pyrealsense2 as rs
 import subprocess
 from enum import Enum
 import time
+import datetime
 
 # カメラからの画像の幅と高さ[pxl]
 FRAME_WIDTH = 320
@@ -13,7 +14,28 @@ FRAME_HEIGHT = 240
 FPS = 30
 
 # WHITE BALANCE
-WB = 4500
+WB = 5400
+RS_WB = 5000
+
+# Gain
+GAIN = 50
+RS_GAIN = 50
+
+# Contrast
+CONTRAST = 50
+RS_CONTRAST = 50
+
+# Hue
+HUE = -1
+RS_HUE = 0
+
+# Saturation
+SATURATION = 32
+RS_SATURATION = 64
+
+# Brightness
+BRIGHTNESS = 170
+RS_BRIGHTNESS = 0
 
 # Front Upper Realsense serial number
 FRONT_UPPER_REALSENSE_SERIAL_NUMBER = '242622071603'
@@ -53,10 +75,7 @@ def usb_video_device(port : int):
         return
 
 class UpperCamera:
-    def __init__(self):
-        connected_devices = rs.context().query_devices()
-        serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in connected_devices]
-        print(f"{serial_number_list=}")
+    def __init__(self, timestamp):
         try:
             # Configure depth and color streams
             self.pipeline = rs.pipeline()
@@ -80,9 +99,24 @@ class UpperCamera:
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
+            rgb_camera_sensor.set_option(rs.option.gain, RS_GAIN)
+            rgb_camera_sensor.set_option(rs.option.contrast, RS_CONTRAST)
+            rgb_camera_sensor.set_option(rs.option.hue, RS_HUE)
+            rgb_camera_sensor.set_option(rs.option.saturation, RS_SATURATION)
+            rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
+            
+            print(f"{rgb_camera_sensor.get_option(rs.option.gain)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.contrast)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.hue)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.saturation)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.brightness)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
         
+            #output_filename = f"{timestamp}_UpperCamera.mp4"
+            #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            #self.output_file = cv2.VideoWriter(output_filename,fourcc,FPS,(FRAME_WIDTH*2,FRAME_HEIGHT*2))
         except Exception as e:
             print(e)
             print(f"realsense{FRONT_UPPER_REALSENSE_SERIAL_NUMBER} not connected")
@@ -101,7 +135,11 @@ class UpperCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        # 俯瞰画像にする領域のマージン
+        UPPER_MERGIN = 110
+        upper_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-UPPER_MERGIN,FRAME_HEIGHT/2],[UPPER_MERGIN,FRAME_HEIGHT/2],[0,FRAME_HEIGHT]], dtype=np.float32)
+        
+        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,upper_bird_point)
         
         # counter for calculate fps
         self.counter = 0
@@ -127,8 +165,12 @@ class UpperCamera:
         except:
             return False, None, None
 
+    #def write(self, frame):
+        # self.output_file.write(frame)
+        
     def release(self):
         self.pipeline.stop()
+        # self.output_file.release()
         print(f"UpperCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")
     
@@ -136,9 +178,9 @@ class UpperCamera:
         connected_devices = rs.context().query_devices()
         serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in connected_devices]
         return True if FRONT_UPPER_REALSENSE_SERIAL_NUMBER in serial_number_list else False
-
+        
 class LowerCamera:
-    def __init__(self, id=None):
+    def __init__(self, timestamp, id=None):
         if id is not None:
             device_id = id
         else:
@@ -152,6 +194,18 @@ class LowerCamera:
         set_fps = self.cap.set(cv2.CAP_PROP_FPS, FPS)
         self.cap.set(cv2.CAP_PROP_AUTO_WB, 0.0)
         set_wb = self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, WB)
+        self.cap.set(cv2.CAP_PROP_GAIN, GAIN)
+        self.cap.set(cv2.CAP_PROP_CONTRAST, CONTRAST)
+        self.cap.set(cv2.CAP_PROP_SATURATION, SATURATION)
+        self.cap.set(cv2.CAP_PROP_HUE, HUE)
+        self.cap.set(cv2.CAP_PROP_BRIGHTNESS, BRIGHTNESS)
+        
+        print(f"{self.cap.get(cv2.CAP_PROP_GAIN)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_CONTRAST)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_SATURATION)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_HUE)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_BRIGHTNESS)=}")
+        print(f"{self.cap.get(cv2.CAP_PROP_AUTO_WB)=}")
         print(f"device_id_{device_id} fps:{self.cap.get(cv2.CAP_PROP_FPS)}->{set_fps} wb:{self.cap.get(cv2.CAP_PROP_WB_TEMPERATURE)}->{set_wb}")
         
         # v4l2-ctlを用いたホワイトバランスの固定
@@ -169,20 +223,31 @@ class LowerCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        LOWER_MERGIN = 100
+        lower_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-LOWER_MERGIN,0],[LOWER_MERGIN,0],[0,FRAME_HEIGHT]], dtype=np.float32)
+        
+        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,lower_bird_point)
     
         # counter for calculate fps
         self.counter = 0
         self.start_time = time.time()
+        
+        #output_filename = f"{timestamp}_LowerCamera.mp4"
+        #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        #self.output_file = cv2.VideoWriter(output_filename,fourcc,FPS,(FRAME_WIDTH*2,FRAME_HEIGHT*2))
         
     def read(self):
         ret, frame = self.cap.read()
         self.counter += 1
         # Noneはダミー（デプスがある時と同じ引数の数にするため）
         return ret, frame, None
+    
+    #def write(self, frame):
+        # self.output_file.write(frame)
 
     def release(self):
         self.cap.release()
+        # self.output_file.release()
         print(f"LowerCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Capturing Device")
     
@@ -191,7 +256,7 @@ class LowerCamera:
     
 
 class RearCamera:
-    def __init__(self):
+    def __init__(self, timestamp):
         try:
             # Configure depth and color streams
             self.pipeline = rs.pipeline()
@@ -215,8 +280,24 @@ class RearCamera:
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
             rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, WB)
+            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
+            rgb_camera_sensor.set_option(rs.option.gain, RS_GAIN)
+            rgb_camera_sensor.set_option(rs.option.contrast, RS_CONTRAST)
+            rgb_camera_sensor.set_option(rs.option.hue, RS_HUE)
+            rgb_camera_sensor.set_option(rs.option.saturation, RS_SATURATION)
+            rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
+            
+            print(f"{rgb_camera_sensor.get_option(rs.option.contrast)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.gain)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.hue)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.saturation)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.brightness)=}")
+            print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
+        
+            #output_filename = f"{timestamp}_RearCamera.mp4"
+            #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            #self.output_file = cv2.VideoWriter(output_filename,fourcc,FPS,(FRAME_WIDTH,FRAME_HEIGHT))
         except Exception as e:
             print(e)
             print(f"realsense{REAR_REALSENSE_SERIAL_NUMBER} not connected")
@@ -235,7 +316,10 @@ class RearCamera:
         theta_y = 0
         theta_z = 0
         
-        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z)
+        REAR_MERGIN = 110
+        rear_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-REAR_MERGIN,FRAME_HEIGHT/2],[REAR_MERGIN,FRAME_HEIGHT/2],[0,FRAME_HEIGHT]], dtype=np.float32)
+        
+        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,rear_bird_point)
 
         # counter for calculate fps
         self.counter = 0
@@ -261,8 +345,12 @@ class RearCamera:
         except:
             return False, None, None
 
+    #def write(self, frame):
+        # self.output_file.write(frame)
+        
     def release(self):
         self.pipeline.stop()
+        # self.output_file.release()
         print(f"RearCamera : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")
     
