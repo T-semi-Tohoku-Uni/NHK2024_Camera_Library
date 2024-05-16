@@ -3,7 +3,7 @@ import queue
 from enum import Enum
 import datetime
 from ultralytics import YOLO
-from .camera import UpperCamera,LowerCamera, ImageSharedMemory
+from .camera import ImageSharedMemory, RealsenseObject
 from .detect import DetectObj, OUTPUT_ID
 from typing import Callable
 import numpy as np
@@ -16,8 +16,30 @@ class MainProcess:
             save_movie=False,
         ):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f")[:-3]
-        self.ucam = UpperCamera(f"{timestamp}")
-        self.lcam = LowerCamera(f"{timestamp}")
+        # self.ucam = UpperCamera(f"{timestamp}")
+        self.ucam = RealsenseObject(
+            timestamp=f"{timestamp}",
+            serial_number="242622071603",
+            focal_length=270,
+            pos_x=-155,
+            pos_y=430,
+            pos_z=100,
+            theta_x = 10*np.pi/180,
+            theta_y = 0,
+            theta_z = 0
+        )
+        # self.lcam = LowerCamera(f"{timestamp}")
+        self.lcam = RealsenseObject(
+            timestamp=f"{timestamp}",
+            serial_number="944122072123",
+            focal_length=270,
+            pos_x=0,
+            pos_y=300,
+            pos_z=-150,
+            theta_x=0,
+            theta_y=0,
+            theta_z=0
+            )
         self.detector = DetectObj(model_path)
 
 
@@ -37,8 +59,10 @@ class MainProcess:
         
     # カメラからの画像取得と画像処理、推論(デプス無し)をスレッドごとに分けて実行      
     def thread_start(self):
-        self.thread_upper_capture = threading.Thread(target=self.detector.capturing, args=(self.q_upper_in,self.ucam), daemon=True)
-        self.thread_lower_capture = threading.Thread(target=self.detector.capturing, args=(self.q_lower_in,self.lcam), daemon=True)
+        # self.thread_upper_capture = threading.Thread(target=self.detector.capturing, args=(self.q_upper_in,self.ucam), daemon=True)
+        self.thread_upper_capture = self.ucam.capture_thread
+        # self.thread_lower_capture = threading.Thread(target=self.detector.capturing, args=(self.q_lower_in,self.lcam), daemon=True)
+        self.thread_lower_capture = self.lcam.capture_thread
         self.thread_front_detector = threading.Thread(
             target=self.detector.detecting_ball, 
             args=(
@@ -84,5 +108,6 @@ class MainProcess:
         self.terminate_camera()
         self.terminate_queue()
 
+        # TODO: カメラのプロセスの開放
                 
         

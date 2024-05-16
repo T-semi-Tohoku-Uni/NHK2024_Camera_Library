@@ -5,7 +5,7 @@ import threading
 import queue
 from enum import Enum
 from queue import Queue
-from .camera import UpperCamera, LowerCamera
+from .camera import RealsenseObject
 import torch
 
 # Camera Frame Width and Height[pxl]
@@ -424,17 +424,17 @@ class DetectObj:
         # 動画保存するかどうか
         self.save_movie = False
         
-    # 画像を取得してキューに入れる
-    def capturing(self, q_frames, cap):
-        while True:
-            try:
-                ret, frame, _ = cap.read()
-                if not ret:
-                    frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                # q_frames.put(frame)
-                cap.image_buffer.write_rgb(frame)
-            except KeyboardInterrupt:
-                break
+    # # 画像を取得してキューに入れる
+    # def capturing(self, q_frames, cap):
+    #     while True:
+    #         try:
+    #             ret, frame, _ = cap.read()
+    #             if not ret:
+    #                 frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
+    #             # q_frames.put(frame)
+    #             cap.image_buffer.write_rgb(frame)
+    #         except KeyboardInterrupt:
+    #             break
           
     # 画像(depthも)を取得してキューに入れる
     def capturing_with_depth(self, q_frames, cap):
@@ -448,7 +448,7 @@ class DetectObj:
             except KeyboardInterrupt:
                 break
     
-    def detecting_ball(self, ucam: UpperCamera, lcam: LowerCamera, q_ucam: Queue, q_lcam: Queue, q_out: Queue):
+    def detecting_ball(self, ucam: RealsenseObject, lcam: RealsenseObject, q_ucam: Queue, q_lcam: Queue, q_out: Queue):
         while True:
             try:
                 paddy_rice_x = 0
@@ -457,7 +457,7 @@ class DetectObj:
                 is_obtainable = False
                 
                 # lcam_frame = q_lcam.get()
-                lcam_frame = lcam.image_buffer.read_rgb()
+                lcam_frame, _ = lcam.read_image_buffer()
                 print(lcam_frame.shape)
                 lcam_results = self.model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
                 lcam_annotated_frame = lcam_results[0].plot()
@@ -465,7 +465,7 @@ class DetectObj:
                 classes = lcam_results[0].boxes.cls
                 boxes = lcam_results[0].boxes
                 
-                ucam_frame = ucam.image_buffer.read_rgb()
+                ucam_frame = ucam.read_image_buffer()
                 ucam_results = self.model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
                 ucam_annotated_frame = ucam_results[0].plot()
                 
