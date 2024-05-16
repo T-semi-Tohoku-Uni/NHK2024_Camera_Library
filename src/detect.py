@@ -4,6 +4,9 @@ from ultralytics import YOLO
 import threading
 import queue
 from enum import Enum
+from queue import Queue
+from .camera import UpperCamera, LowerCamera
+import torch
 
 # Camera Frame Width and Height[pxl]
 FRAME_WIDTH = 320
@@ -392,10 +395,10 @@ def detect_horizon_vertical(original_line_list, line_type, cam_param, line_detec
 
 
 class DetectObj:
-    def __init__(self,model_path):
+    def __init__(self, model_path):
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
         # YOLOv8 modelのロード
-        # self.model = YOLO(ncnn_model_path, task='detect')
-        self.model = YOLO(model_path)
+        self.model = YOLO(model_path).to(device)
         
         # maskの値を設定する
         self.blue_lower_mask = np.array([138, 0, 20])
@@ -443,7 +446,66 @@ class DetectObj:
                 q_frames.put((color, depth))
             except KeyboardInterrupt:
                 break
+    
+    def detecting_ball(self, ucam: UpperCamera, lcam: LowerCamera, q_ucam: Queue, q_lcam: Queue, q_out: Queue):
+        while True:
+            try:
+                paddy_rice_x = 0
+                paddy_rice_y = 0
+                paddy_rice_z = DETECTABLE_MAX_DIS
+                is_obtainable = False
                 
+                lcam_frame = q_lcam.get()
+                lcam_results = self.model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
+                lcam_annotated_frame = lcam_results[0].plot()
+                names = lcam_results[0].names
+                classes = lcam_results[0].boxes.cls
+                boxes = lcam_results[0].boxes
+                
+                ucam_frame = q_ucam.get()
+                ucam_results = self.model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
+                ucam_annotated_frame = ucam_results[0].plot()
+                
+                # もし、下部カメラで検出できていれば
+                if classes.dim() > 0:
+                    for box, cls in zip(boxes, classes):
+                        name = names[int(cls)]
+                        if name == "blueball" :
+                            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                            # 長方形の長辺を籾の半径とする
+                            r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+                            z = calc_distance(r, PADDY_RICE_RADIUS)
+                            # 籾が複数ある場合は最も近いものの座標を返す
+                            if z < paddy_rice_z:
+                                (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int((x1+x2)/2),int((y1+y2)/2),z)
+                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+                    
+                else:
+                    names = ucam_results[0].names
+                    classes = ucam_results[0].boxes.cls
+                    boxes = ucam_results[0].boxes
+                    for box, cls in zip(boxes, classes):
+                        name = names[int(cls)]
+                        if(name == "blueball"):
+                            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+                            # 長方形の長辺を籾の半径とする
+                            r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+                            z = calc_distance(r, PADDY_RICE_RADIUS)
+                            # 籾が複数ある場合は最も近いものの座標を返す
+                            if z < paddy_rice_z:
+                                (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int((x1+x2)/2),int((y1+y2)/2),z)
+                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+                
+                show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
+                # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+                output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+                print(type(ucam_frame))
+                q_out.put((show_frame, OUTPUT_ID.BALL))
+                self.ball_camera_out = output_data
+            
+            except KeyboardInterrupt:
+                break
+    
     # 前方カメラでライン検出，ボール検出（閾値によるマスキング）を行う
     def detecting_front(self,ucam,lcam,rcam,q_ucam,q_lcam,q_rcam,q_out):
         while True:

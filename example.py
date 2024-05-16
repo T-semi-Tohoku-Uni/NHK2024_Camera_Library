@@ -1,21 +1,22 @@
 import numpy as np
 import cv2
-from src import MainProcess,OUTPUT_ID
+from src.capture_and_detect import MainProcess
 
 if __name__ == "__main__":
-    model_path = 'models/20240109best.pt'
+    # model_path = 'models/20240109best.pt'
+    blue_model_path = 'models/NHK2024_blue_ball_model/blue_ball_model.pt'
     
     # メインプロセスを実行するクラス
-    mainprocess = MainProcess(model_path)
+    mainprocess = MainProcess(blue_model_path, show=True)
     
     # マルチスレッドの実行
     mainprocess.thread_start()
     
     while True:
         try:
-            if mainprocess.detector.show:    
-                frame, id = mainprocess.q_out.get()
-                cv2.imshow(f'{id.value}', frame)
+            if mainprocess.detector.show:   
+                frame, id = mainprocess.q_out.get() 
+                cv2.imshow(f'images', frame)
                 key = cv2.waitKey(1)
                 if key == ord("q"):
                     break

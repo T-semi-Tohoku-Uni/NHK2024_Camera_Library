@@ -5,6 +5,8 @@ import subprocess
 from enum import Enum
 import time
 import datetime
+from multiprocessing import RawArray
+import ctypes
 
 # カメラからの画像の幅と高さ[pxl]
 FRAME_WIDTH = 320
@@ -98,13 +100,13 @@ class UpperCamera:
             device = self.pipeline.get_active_profile().get_device()
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
-            rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
-            rgb_camera_sensor.set_option(rs.option.gain, RS_GAIN)
-            rgb_camera_sensor.set_option(rs.option.contrast, RS_CONTRAST)
-            rgb_camera_sensor.set_option(rs.option.hue, RS_HUE)
-            rgb_camera_sensor.set_option(rs.option.saturation, RS_SATURATION)
-            rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
+            rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, True)
+            # rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
+            # rgb_camera_sensor.set_option(rs.option.gain, RS_GAIN)
+            # rgb_camera_sensor.set_option(rs.option.contrast, RS_CONTRAST)
+            # rgb_camera_sensor.set_option(rs.option.hue, RS_HUE)
+            # rgb_camera_sensor.set_option(rs.option.saturation, RS_SATURATION)
+            # rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
             
             print(f"{rgb_camera_sensor.get_option(rs.option.gain)=}")
             print(f"{rgb_camera_sensor.get_option(rs.option.contrast)=}")
@@ -113,7 +115,14 @@ class UpperCamera:
             print(f"{rgb_camera_sensor.get_option(rs.option.brightness)=}")
             print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
-        
+
+            # 最新の画像を載せる共有メモリの変数
+            original_image = np.zeros((480, 640, 3), dtype=np.uint8)
+            rgb_shard_array = RawArray(ctypes.c_uint8, original_image.size)
+            depth_image_buf = RawArray(ctypes.c_uint8, original_image.size)
+            self.rgb_image_buf = np.frombuffer(rgb_shard_array, dtype=np.uint8).reshape(original_image.shape)
+            self.depth_image_buf = np.frombuffer(depth_image_buf, dtype=np.uint8).reshape(original_image.shape)
+            
             #output_filename = f"{timestamp}_UpperCamera.mp4"
             #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             #self.output_file = cv2.VideoWriter(output_filename,fourcc,FPS,(FRAME_WIDTH*2,FRAME_HEIGHT*2))
@@ -178,84 +187,8 @@ class UpperCamera:
         connected_devices = rs.context().query_devices()
         serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in connected_devices]
         return True if FRONT_UPPER_REALSENSE_SERIAL_NUMBER in serial_number_list else False
-        
+
 class LowerCamera:
-    def __init__(self, timestamp, id=None):
-        if id is not None:
-            device_id = id
-        else:
-            device_id = usb_video_device(PORT_ID.USB2_LOWER.value)
-        # Camera Settings
-        self.cap = cv2.VideoCapture(device_id, cv2.CAP_V4L2)
-        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M','J','P','G'))
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        set_fps = self.cap.set(cv2.CAP_PROP_FPS, FPS)
-        self.cap.set(cv2.CAP_PROP_AUTO_WB, 0.0)
-        set_wb = self.cap.set(cv2.CAP_PROP_WB_TEMPERATURE, WB)
-        self.cap.set(cv2.CAP_PROP_GAIN, GAIN)
-        self.cap.set(cv2.CAP_PROP_CONTRAST, CONTRAST)
-        self.cap.set(cv2.CAP_PROP_SATURATION, SATURATION)
-        self.cap.set(cv2.CAP_PROP_HUE, HUE)
-        self.cap.set(cv2.CAP_PROP_BRIGHTNESS, BRIGHTNESS)
-        
-        print(f"{self.cap.get(cv2.CAP_PROP_GAIN)=}")
-        print(f"{self.cap.get(cv2.CAP_PROP_CONTRAST)=}")
-        print(f"{self.cap.get(cv2.CAP_PROP_SATURATION)=}")
-        print(f"{self.cap.get(cv2.CAP_PROP_HUE)=}")
-        print(f"{self.cap.get(cv2.CAP_PROP_BRIGHTNESS)=}")
-        print(f"{self.cap.get(cv2.CAP_PROP_AUTO_WB)=}")
-        print(f"device_id_{device_id} fps:{self.cap.get(cv2.CAP_PROP_FPS)}->{set_fps} wb:{self.cap.get(cv2.CAP_PROP_WB_TEMPERATURE)}->{set_wb}")
-        
-        # v4l2-ctlを用いたホワイトバランスの固定
-        #cmd = 'v4l2-ctl -d /dev/video0 -c white_balance_automatic=0 -c white_balance_temperature=4500'
-        #ret = subprocess.check_output(cmd, shell=True)
-
-        # 焦点距離
-        focal_length = 270
-        # ロボットの中心位置を原点とした時のカメラの位置[mm]
-        pos_x = 100
-        pos_y = 400
-        pos_z = 150
-        # カメラ座標におけるカメラの傾き[rad]
-        theta_x = 30*np.pi/180
-        theta_y = 0
-        theta_z = 0
-        
-        LOWER_MERGIN = 100
-        lower_bird_point = np.array([[FRAME_WIDTH,FRAME_HEIGHT],[FRAME_WIDTH-LOWER_MERGIN,0],[LOWER_MERGIN,0],[0,FRAME_HEIGHT]], dtype=np.float32)
-        
-        self.params = (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,lower_bird_point)
-    
-        # counter for calculate fps
-        self.counter = 0
-        self.start_time = time.time()
-        
-        #output_filename = f"{timestamp}_LowerCamera.mp4"
-        #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        #self.output_file = cv2.VideoWriter(output_filename,fourcc,FPS,(FRAME_WIDTH*2,FRAME_HEIGHT*2))
-        
-    def read(self):
-        ret, frame = self.cap.read()
-        self.counter += 1
-        # Noneはダミー（デプスがある時と同じ引数の数にするため）
-        return ret, frame, None
-    
-    #def write(self, frame):
-        # self.output_file.write(frame)
-
-    def release(self):
-        self.cap.release()
-        # self.output_file.release()
-        print(f"LowerCamera : {self.counter/(time.time()-self.start_time)}fps")
-        print("Closed Capturing Device")
-    
-    def isOpened(self):
-        return self.cap.isOpened()
-    
-
-class RearCamera:
     def __init__(self, timestamp):
         try:
             # Configure depth and color streams
@@ -279,13 +212,13 @@ class RearCamera:
             device = self.pipeline.get_active_profile().get_device()
             
             rgb_camera_sensor = [s for s in device.sensors if s.get_info(rs.camera_info.name) == 'RGB Camera'][0]
-            rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, False)
-            rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
-            rgb_camera_sensor.set_option(rs.option.gain, RS_GAIN)
-            rgb_camera_sensor.set_option(rs.option.contrast, RS_CONTRAST)
-            rgb_camera_sensor.set_option(rs.option.hue, RS_HUE)
-            rgb_camera_sensor.set_option(rs.option.saturation, RS_SATURATION)
-            rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
+            rgb_camera_sensor.set_option(rs.option.enable_auto_white_balance, True)
+            # rgb_camera_sensor.set_option(rs.option.white_balance, RS_WB)
+            # rgb_camera_sensor.set_option(rs.option.gain, RS_GAIN)
+            # rgb_camera_sensor.set_option(rs.option.contrast, RS_CONTRAST)
+            # rgb_camera_sensor.set_option(rs.option.hue, RS_HUE)
+            # rgb_camera_sensor.set_option(rs.option.saturation, RS_SATURATION)
+            # rgb_camera_sensor.set_option(rs.option.brightness, RS_BRIGHTNESS)
             
             print(f"{rgb_camera_sensor.get_option(rs.option.contrast)=}")
             print(f"{rgb_camera_sensor.get_option(rs.option.gain)=}")
