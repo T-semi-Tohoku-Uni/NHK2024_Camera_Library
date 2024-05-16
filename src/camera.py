@@ -5,8 +5,9 @@ import subprocess
 from enum import Enum
 import time
 import datetime
-from multiprocessing import RawArray
+from multiprocessing import RawArray, Lock
 import ctypes
+from typing import Tuple
 
 # カメラからの画像の幅と高さ[pxl]
 FRAME_WIDTH = 320
@@ -117,11 +118,11 @@ class UpperCamera:
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
 
             # 最新の画像を載せる共有メモリの変数
-            original_image = np.zeros((480, 640, 3), dtype=np.uint8)
-            rgb_shard_array = RawArray(ctypes.c_uint8, original_image.size)
-            depth_image_buf = RawArray(ctypes.c_uint8, original_image.size)
-            self.rgb_image_buf = np.frombuffer(rgb_shard_array, dtype=np.uint8).reshape(original_image.shape)
-            self.depth_image_buf = np.frombuffer(depth_image_buf, dtype=np.uint8).reshape(original_image.shape)
+            # original_image = np.zeros((480, 640, 3), dtype=np.uint8)
+            # rgb_shard_array = RawArray(ctypes.c_uint8, original_image.size)
+            # depth_image_buf = RawArray(ctypes.c_uint8, original_image.size)
+            # self.rgb_image_buf = np.frombuffer(rgb_shard_array, dtype=np.uint8).reshape(original_image.shape)
+            # self.depth_image_buf = np.frombuffer(depth_image_buf, dtype=np.uint8).reshape(original_image.shape)
             
             #output_filename = f"{timestamp}_UpperCamera.mp4"
             #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -153,6 +154,9 @@ class UpperCamera:
         # counter for calculate fps
         self.counter = 0
         self.start_time = time.time()
+        
+        # 最新の画像を載せる共有メモリの変数
+        self.image_buffer = ImageSharedMemory((FRAME_HEIGHT, FRAME_WIDTH, 3))
 
     def read(self):
         try:
@@ -227,7 +231,7 @@ class LowerCamera:
             print(f"{rgb_camera_sensor.get_option(rs.option.brightness)=}")
             print(f"{rgb_camera_sensor.get_option(rs.option.enable_auto_white_balance)=}")
             print(f"realsense{device.get_info(rs.camera_info.serial_number)}, fps:{FPS}, WB:{rgb_camera_sensor.get_option(rs.option.white_balance)}")
-        
+            
             #output_filename = f"{timestamp}_RearCamera.mp4"
             #fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             #self.output_file = cv2.VideoWriter(output_filename,fourcc,FPS,(FRAME_WIDTH,FRAME_HEIGHT))
@@ -257,6 +261,9 @@ class LowerCamera:
         # counter for calculate fps
         self.counter = 0
         self.start_time = time.time()
+        
+        # 最新の画像を載せる共有メモリの変数
+        self.image_buffer = ImageSharedMemory((FRAME_HEIGHT, FRAME_WIDTH, 3))
         
     def read(self):
         try:
@@ -291,3 +298,40 @@ class LowerCamera:
         connected_devices = rs.context().query_devices()
         serial_number_list = [d.get_info(rs.camera_info.serial_number) for d in connected_devices]
         return True if REAR_REALSENSE_SERIAL_NUMBER in serial_number_list else False
+
+class ImageSharedMemory:
+    def __init__(self, image_size: Tuple[int, int, int]):
+        # 使用する共有メモリの宣言
+        original_image = np.zeros(image_size, dtype=np.uint8)
+        rgb_shard_array = RawArray(ctypes.c_uint8, original_image.size)
+        depth_image_buf = RawArray(ctypes.c_uint8, original_image.size)
+        self.rgb_image_buf: np.ndarray = np.frombuffer(rgb_shard_array, dtype=np.uint8).reshape(original_image.shape)
+        self.depth_image_buf: np.ndarray = np.frombuffer(depth_image_buf, dtype=np.uint8).reshape(original_image.shape)
+        
+        print(original_image.shape)
+        print(self.rgb_image_buf.shape)
+        print(self.depth_image_buf.shape)
+        
+        # 排他ロック用の変数
+        self.rgb_lock = Lock()
+        self.depth_lock = Lock()
+        
+    def read_rgb(self) -> np.ndarray:
+        with self.rgb_lock:
+            rgb_image = self.rgb_image_buf
+        return rgb_image
+    
+    def read_depth(self) -> np.ndarray:
+        with self.depth_lock:
+            depth_image = self.depth_image_buf
+        return depth_image
+    
+    def write_rgb(self, rgb_image: np.ndarray):
+        with self.rgb_lock:
+            self.rgb_image_buf = rgb_image
+        return
+    
+    def write_depth(self, depth_image: np.ndarray):
+        with self.depth_lock:
+            self.depth_image_buf = depth_image
+        return

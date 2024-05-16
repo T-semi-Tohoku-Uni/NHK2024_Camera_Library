@@ -3,7 +3,7 @@ import queue
 from enum import Enum
 import datetime
 from ultralytics import YOLO
-from .camera import UpperCamera,LowerCamera
+from .camera import UpperCamera,LowerCamera, ImageSharedMemory
 from .detect import DetectObj, OUTPUT_ID
 from typing import Callable
 import numpy as np
@@ -77,7 +77,7 @@ class MainProcess:
 
     # release capture
     def terminate_camera(self):
-        for cam in (self.ucam,self.lcam,self.rcam):
+        for cam in (self.ucam,self.lcam):
             cam.release()
 
     def finish(self):

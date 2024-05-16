@@ -431,7 +431,8 @@ class DetectObj:
                 ret, frame, _ = cap.read()
                 if not ret:
                     frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                q_frames.put(frame)
+                # q_frames.put(frame)
+                cap.image_buffer.write_rgb(frame)
             except KeyboardInterrupt:
                 break
           
@@ -455,14 +456,16 @@ class DetectObj:
                 paddy_rice_z = DETECTABLE_MAX_DIS
                 is_obtainable = False
                 
-                lcam_frame = q_lcam.get()
+                # lcam_frame = q_lcam.get()
+                lcam_frame = lcam.image_buffer.read_rgb()
+                print(lcam_frame.shape)
                 lcam_results = self.model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
                 lcam_annotated_frame = lcam_results[0].plot()
                 names = lcam_results[0].names
                 classes = lcam_results[0].boxes.cls
                 boxes = lcam_results[0].boxes
                 
-                ucam_frame = q_ucam.get()
+                ucam_frame = ucam.image_buffer.read_rgb()
                 ucam_results = self.model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
                 ucam_annotated_frame = ucam_results[0].plot()
                 
