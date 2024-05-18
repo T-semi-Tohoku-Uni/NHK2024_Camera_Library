@@ -4,11 +4,17 @@ from src.capture_and_detect import MainProcess
 
 if __name__ == "__main__":
     # model_path = 'models/20240109best.pt'
-    blue_model_path = 'models/NHK2024_blue_ball_model/blue_ball_model.pt'
+    blue_model_path = 'models/yolov8n.pt'
+    red_model_path = 'models/yolov8n.pt'
+    silo_model_path = 'models/yolov8n.pt'
     
     # メインプロセスを実行するクラス
     print("create main instance")
-    mainprocess = MainProcess(blue_model_path, show=True)
+    mainprocess = MainProcess(
+        ball_model_path=red_model_path, 
+        silo_model_path=silo_model_path,
+        show=True
+    )
     
     # マルチスレッドの実行
     print("start thread")
@@ -18,19 +24,19 @@ if __name__ == "__main__":
     while True:
         print("loop")
         try:
-            if mainprocess.detector.show:   
-                frame, id = mainprocess.q_out.get() 
-                cv2.imshow(f'images', frame)
-                key = cv2.waitKey(1)
-                if key == ord("q"):
-                    break
+            # if mainprocess.detector.show:   
+            frame, id = mainprocess.q_out.get() 
+            cv2.imshow(f'{id}', frame)
+            key = cv2.waitKey(1)
+            if key == ord("q"):
+                break
             
-            items,x,y,z,is_obtainable = mainprocess.update_ball_camera_out()
-            x,y,z = mainprocess.update_silo_camera_out()
-            forward, right, left, x, theta = mainprocess.update_line_camera_out()
-            print(f"\n{items=}, {x=}, {y=}, {z=}, {is_obtainable=}")
-            print(f"\n{x=}, {y=}, {z=}")
-            print(f"\n{forward=}, {right=}, {left=}, {x=}, {theta=}")
+            # items,x,y,z,is_obtainable = mainprocess.update_ball_camera_out()
+            # x,y,z = mainprocess.update_silo_camera_out()
+            # forward, right, left, x, theta = mainprocess.update_line_camera_out()
+            # print(f"\n{items=}, {x=}, {y=}, {z=}, {is_obtainable=}")
+            # print(f"\n{x=}, {y=}, {z=}")
+            # print(f"\n{forward=}, {right=}, {left=}, {x=}, {theta=}")
             
         except KeyboardInterrupt:
             break

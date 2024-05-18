@@ -1,3 +1,9 @@
 [submodule "models/NHK2024_blue_ball_model"]
 	path = models/NHK2024_blue_ball_model
 	url = git@github.com:T-semi-Tohoku-Uni/NHK2024_blue_ball_model.git
+[submodule "models/NHK2024_red_ball_model"]
+	path = models/NHK2024_red_ball_model
+	url = git@github.com:T-semi-Tohoku-Uni/NHK2024_red_ball_model.git
+[submodule "models/NHK2024_silo_model"]
+	path = models/NHK2024_silo_model
+	url = git@github.com:T-semi-Tohoku-Uni/NHK2024_silo_model.git

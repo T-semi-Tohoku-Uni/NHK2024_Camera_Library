@@ -7,15 +7,39 @@ from .camera import ImageSharedMemory, RealsenseObject
 from .detect import DetectObj, OUTPUT_ID
 from typing import Callable
 import numpy as np
+import torch
+import os
 
 class MainProcess:
     def __init__(
             self,
-            model_path='/home/pi/NHK2024/NHK2024_R2_Raspi/src/NHK2024_Camera_Library/models/20240109best.pt', 
+            ball_model_path,
+            silo_model_path,
             show=False, 
             save_movie=False,
         ):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f")[:-3]
+        
+        # Get target device
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
+        # 最大使用率を設定
+        # max_usage = 0.45
+
+        # # CUDAの設定を調整
+        # os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 使用するGPUを指定（0番目のGPU）
+        # torch.cuda.set_per_process_memory_fraction(max_usage, 0)
+
+        
+        # Create YOLO model
+        ball_model = YOLO(ball_model_path).to(device)
+        silo_model = YOLO(silo_model_path).to(device)
+        # Create Detect Object
+        self.detector = DetectObj(
+            ball_model=ball_model, 
+            silo_model=silo_model
+       )
+        
         # self.ucam = UpperCamera(f"{timestamp}")
         self.ucam = RealsenseObject(
             timestamp=f"{timestamp}",
@@ -40,8 +64,6 @@ class MainProcess:
             theta_y=0,
             theta_z=0
             )
-        self.detector = DetectObj(model_path)
-
 
         self.thread_upper_capture = threading.Thread()
         self.thread_lower_capture = threading.Thread()
@@ -68,8 +90,25 @@ class MainProcess:
             args=(
                 self.ucam,
                 self.lcam,
-                self.q_upper_in,
-                self.q_lower_in,
+                self.q_out
+            ),
+            daemon=True
+        )
+        self.thread_silo_detector = threading.Thread(
+            target=self.detector.detecting_silo,
+            args=(
+                self.ucam,
+                self.lcam,
+                self.q_out
+            ),
+            daemon=True
+        )
+        
+        self.thread_detector = threading.Thread(
+            target=self.detector.detecting,
+            args=(
+                self.ucam,
+                self.lcam,
                 self.q_out
             ),
             daemon=True
@@ -77,7 +116,9 @@ class MainProcess:
         
         self.thread_upper_capture.start()
         self.thread_lower_capture.start()
-        self.thread_front_detector.start()
+        self.thread_detector.start()
+        # self.thread_front_detector.start()
+        # self.thread_silo_detector.start()
         
     def update_ball_camera_out(self):
         return self.detector.ball_camera_out
