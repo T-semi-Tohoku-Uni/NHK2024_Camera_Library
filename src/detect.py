@@ -465,8 +465,9 @@ class DetectObj:
                 classes = lcam_results[0].boxes.cls
                 boxes = lcam_results[0].boxes
                 
-                ucam_frame = ucam.read_image_buffer()
+                ucam_frame, _ = ucam.read_image_buffer()
                 ucam_results = self.model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
+                ucam_annotated_frame = ucam_frame
                 ucam_annotated_frame = ucam_results[0].plot()
                 
                 # もし、下部カメラで検出できていれば
@@ -484,6 +485,7 @@ class DetectObj:
                     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                     
                 else:
+                    pass
                     names = ucam_results[0].names
                     classes = ucam_results[0].boxes.cls
                     boxes = ucam_results[0].boxes
@@ -502,7 +504,6 @@ class DetectObj:
                 show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
                 # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
                 output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                print(type(ucam_frame))
                 q_out.put((show_frame, OUTPUT_ID.BALL))
                 self.ball_camera_out = output_data
             

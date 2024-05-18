@@ -19,7 +19,7 @@ class MainProcess:
         # self.ucam = UpperCamera(f"{timestamp}")
         self.ucam = RealsenseObject(
             timestamp=f"{timestamp}",
-            serial_number="242622071603",
+            serial_number='242622071603',
             focal_length=270,
             pos_x=-155,
             pos_y=430,
@@ -31,7 +31,7 @@ class MainProcess:
         # self.lcam = LowerCamera(f"{timestamp}")
         self.lcam = RealsenseObject(
             timestamp=f"{timestamp}",
-            serial_number="944122072123",
+            serial_number='944122072123',
             focal_length=270,
             pos_x=0,
             pos_y=300,

@@ -83,7 +83,7 @@ class RealsenseObject:
     def __init__(
             self, 
             timestamp,
-            serial_number: int,
+            serial_number: str,
             focal_length,
             pos_x,
             pos_y,
@@ -131,7 +131,7 @@ class RealsenseObject:
             
         except Exception as e:
             print(e)
-            print(f"realsense{FRONT_UPPER_REALSENSE_SERIAL_NUMBER} not connected")
+            print(f"realsense{serial_number} not connected")
             
         # 複数のRealsenseのパイプラインを開く時間に間隔を設けることでRuntimeErrorの解消を図る
         time.sleep(1)

@@ -7,12 +7,16 @@ if __name__ == "__main__":
     blue_model_path = 'models/NHK2024_blue_ball_model/blue_ball_model.pt'
     
     # メインプロセスを実行するクラス
+    print("create main instance")
     mainprocess = MainProcess(blue_model_path, show=True)
     
     # マルチスレッドの実行
+    print("start thread")
     mainprocess.thread_start()
+    print("complete start thread")
     
     while True:
+        print("loop")
         try:
             if mainprocess.detector.show:   
                 frame, id = mainprocess.q_out.get() 
