@@ -1,12 +1,14 @@
 import numpy as np
 import cv2
 from ultralytics import YOLO
+from ultralytics.engine.results import Boxes
 import threading
 import queue
 from enum import Enum
 from queue import Queue
 from .camera import RealsenseObject
-import torch
+from torch import Tensor
+import typing
 
 # Camera Frame Width and Height[pxl]
 FRAME_WIDTH = 320
@@ -393,7 +395,50 @@ def detect_horizon_vertical(original_line_list, line_type, cam_param, line_detec
         
     return output
 
-
+def find_closest_ball_coordinates(
+    target_ball_color,
+    names,
+    classes: Tensor, 
+    boxes: Boxes,
+    camera_params: tuple
+) -> typing.Tuple[int, int, int, int, bool]:
+    '''
+    names: ラベルと文字がペアで入っている。names[0] = "redball"みたいな
+    classes: 検出したラベルがTensor型で入る。例えば「赤, 赤, 紫」を検出した場合は「1, 1, 0」が入る
+    '''
+    
+    # 一番近いボールの座標をpaddy_rice_x ...に入れるらしい
+    paddy_rice_x = 0
+    paddy_rice_y = 0
+    paddy_rice_z = DETECTABLE_MAX_DIS
+    is_obtainable = False
+    
+    # 赤のボールのboxesだけ取得する
+    target_boxes: list[Boxes] = [
+        box for box, cl in zip(boxes, classes) if names[int(cl)] == target_ball_color
+    ]
+    
+    if len(target_boxes) == 0:
+        return (len(target_boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+     
+    # 空の場合
+    if not target_boxes:
+        return None
+    
+    for box in target_boxes:
+        x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+        
+        # 長方形の長辺を籾の半径とする
+        r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+        z = calc_distance(r, PADDY_RICE_RADIUS)
+        
+        # 籾が複数ある場合は最も近いものの座標を返す
+        if z < paddy_rice_z: # TODO: これあっているのか確認する
+            (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(camera_params,int((x1+x2)/2),int((y1+y2)/2),z)
+            
+    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+    return (len(target_boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+    
 class DetectObj:
     def __init__(self, ball_model: YOLO, silo_model: YOLO):
         self.ball_model = ball_model
@@ -435,10 +480,10 @@ class DetectObj:
     
     def ball_detect(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
         # print("[DetectObj.ball_detect]: start")
-        paddy_rice_x = 0
-        paddy_rice_y = 0
-        paddy_rice_z = DETECTABLE_MAX_DIS
-        is_obtainable = False
+        # paddy_rice_x = 0
+        # paddy_rice_y = 0
+        # paddy_rice_z = DETECTABLE_MAX_DIS
+        # is_obtainable = False
         
         lcam_frame, _ = lcam.read_image_buffer()
         lcam_results = self.ball_model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
@@ -459,40 +504,70 @@ class DetectObj:
         
         boxes = lcam_results[0].boxes
         
-        # もし、下部カメラで検出できていれば
-        if lcam_classes.dim() > 0:
-            for box, cls in zip(lcam_boxes, lcam_classes):
-                name = lcam_names[int(cls)]
-                if name == "redball" :
-                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    # 長方形の長辺を籾の半径とする
-                    r = max(abs(x1-x2)/2, abs(y1-y2)/2)
-                    z = calc_distance(r, PADDY_RICE_RADIUS)
-                    # 籾が複数ある場合は最も近いものの座標を返す
-                    if z < paddy_rice_z:
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int((x1+x2)/2),int((y1+y2)/2),z)
-            is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-        else:
-            boxes = ucam_results[0].boxes
-            for box, cls in zip(ucam_boxes, ucam_classes):
-                name = ucam_names[int(cls)]
-                if(name == "redball"):
-                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    # 長方形の長辺を籾の半径とする
-                    r = max(abs(x1-x2)/2, abs(y1-y2)/2)
-                    z = calc_distance(r, PADDY_RICE_RADIUS)
-                    # 籾が複数ある場合は最も近いものの座標を返す
-                    if z < paddy_rice_z:
-                        (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int((x1+x2)/2),int((y1+y2)/2),z)
-            is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+        # (ターゲットの色のボールの数, 一番近いx, y, z, 取れるかどうか)のタプル形式
+        # まず上からのカメラで認識
+        ball_coordinates = find_closest_ball_coordinates(
+            target_ball_color="redball",
+            names=lcam_names,
+            classes=lcam_classes,
+            boxes=lcam_boxes,
+            camera_params=lcam.params
+        )
         
-        show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
+        # ボールを見つけられなかったら下のカメラ（遠くまで見れる方）でも確認する
+        if ball_coordinates[0] == 0:
+            
+            ball_coordinates = find_closest_ball_coordinates(
+                target_ball_color="redball",
+                names=ucam_names,
+                classes=ucam_classes,
+                boxes=ucam_boxes,
+                camera_params=ucam.params
+            )
         
         # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-        output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-        self.ball_camera_out = output_data
+        self.ball_camera_out = ball_coordinates
+        print(ball_coordinates)
         
+        # デバッグで使うカメラキャプチャ画像の出力用
+        show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
         q_out.put((show_frame, OUTPUT_ID.BALL))
+        
+        # # もし、下部カメラで検出できていれば
+        # print(lcam_classes)
+        # if lcam_classes.dim() > 0:
+        #     for box, cls in zip(lcam_boxes, lcam_classes):
+        #         name = lcam_names[int(cls)]
+        #         if name == "redball" :
+        #             x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+        #             # 長方形の長辺を籾の半径とする
+        #             r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+        #             z = calc_distance(r, PADDY_RICE_RADIUS)
+        #             # 籾が複数ある場合は最も近いものの座標を返す
+        #             if z < paddy_rice_z:
+        #                 (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int((x1+x2)/2),int((y1+y2)/2),z)
+        #     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+        # else:
+        #     boxes = ucam_results[0].boxes
+        #     for box, cls in zip(ucam_boxes, ucam_classes):
+        #         name = ucam_names[int(cls)]
+        #         if(name == "redball"):
+        #             x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+        #             # 長方形の長辺を籾の半径とする
+        #             r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+        #             z = calc_distance(r, PADDY_RICE_RADIUS)
+        #             # 籾が複数ある場合は最も近いものの座標を返す
+        #             if z < paddy_rice_z:
+        #                 (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int((x1+x2)/2),int((y1+y2)/2),z)
+        #     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+        
+        # show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
+        
+        # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+        # output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+        # self.ball_camera_out = output_data
+        
+        # q_out.put((show_frame, OUTPUT_ID.BALL))
         
         # print("[DetectObj.ball_detect]: finish")
         

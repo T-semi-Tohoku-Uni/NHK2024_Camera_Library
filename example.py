@@ -24,13 +24,13 @@ if __name__ == "__main__":
     while True:
         try:
             # if mainprocess.detector.show:   
-            # frame, id = mainprocess.q_out.get() 
-            # # cv2.imshow(f'{id}', frame)
-            # key = cv2.waitKey(1)
-            # if key == ord("q"):
-            #     break
+            frame, id = mainprocess.q_out.get() 
+            cv2.imshow(f'{id}', frame)
+            key = cv2.waitKey(1)
+            if key == ord("q"):
+                break
             
-            _, _= mainprocess.q_out.get()
+            # _, _= mainprocess.q_out.get()
             continue
             
             # items,x,y,z,is_obtainable = mainprocess.update_ball_camera_out()
