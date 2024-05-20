@@ -398,68 +398,34 @@ class DetectObj:
     def __init__(self, ball_model: YOLO, silo_model: YOLO):
         self.ball_model = ball_model
         self.silo_model = silo_model
-        
-        # # GPUにロードする時間が結構かかるのでダミーの変数で推論する
-        # ball_preload_thread = threading.Thread(
-        #     target = lambda: [self.ball_model.predict(np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)), print("Complete loading ball model to GPU")]
-        # )
-        # silo_preload_thread = threading.Thread(
-        #     target = lambda: [self.silo_model.predict(np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)), print("Complete loading silo model to GPU")]
-        # )
-        # ball_preload_thread.start()
-        # silo_preload_thread.start()
-        
-        # maskの値を設定する
-        self.blue_lower_mask = np.array([138, 0, 20])
-        self.blue_upper_mask = np.array([163, 255, 255])
-        self.purple_lower_mask = np.array([165,40,40])
-        self.purple_upper_mask = np.array([230,250,250])
-        self.red_lower_mask_1 = np.array([0,40,40])
-        self.red_upper_mask_1 = np.array([10,255,255])
-        self.red_lower_mask_2 = np.array([230,40,40])
-        self.red_upper_mask_2 = np.array([255,255,255])
-        self.white_lower_mask = np.array([0,120,80])
-        self.white_upper_mask = np.array([255,255,255])
-        
-        # fast line detector
-        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=40,distance_threshold=1.41421356,canny_th1=180.0,canny_th2=180.0,canny_aperture_size=3,do_merge=True)
-     
+
+        # preload model to GPU
+        preload_thread = threading.Thread(
+            target = self.preload, daemon=True
+        ).start()
         self.ball_camera_out = (0,0.0,0.0,DETECTABLE_MAX_DIS,False)
         self.silo_camera_out = (0.0,0.0,0.0)
         self.line_camera_out = (False,False,False,0.0,0.0)
         
+        # TODO
         # 画像表示するかどうか（q_outに画像とidを入れる
         self.show = True
         # 動画保存するかどうか
         self.save_movie = False
         
         print("Complete DetectObj Initialize")
+    
+    def preload(self):
+        print("[Start]: preload ball model")
+        self.ball_model.predict(np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8))
+        print("[Complete]: preload ball model")
         
-    # # 画像を取得してキューに入れる
-    # def capturing(self, q_frames, cap):
-    #     while True:
-    #         try:
-    #             ret, frame, _ = cap.read()
-    #             if not ret:
-    #                 frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-    #             # q_frames.put(frame)
-    #             cap.image_buffer.write_rgb(frame)
-    #         except KeyboardInterrupt:
-    #             break
-          
-    # 画像(depthも)を取得してキューに入れる
-    def capturing_with_depth(self, q_frames, cap):
-        while True:
-            try:
-                ret, color, depth = cap.read()
-                if not ret:
-                    color = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                    depth = np.zeros((FRAME_HEIGHT, FRAME_WIDTH),dtype=np.uint8)
-                q_frames.put((color, depth))
-            except KeyboardInterrupt:
-                break
+        print("[Start]: preload silo model")
+        self.silo_model.predict(np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8))
+        print("[Complete]: preload silo model")
     
     def detecting(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+        print("[DetectObj.detecting]: start")
         while True:
             try:
                 self.ball_detect(ucam, lcam, q_out)
@@ -468,29 +434,36 @@ class DetectObj:
                 print(f"{e}")
     
     def ball_detect(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+        # print("[DetectObj.ball_detect]: start")
         paddy_rice_x = 0
         paddy_rice_y = 0
         paddy_rice_z = DETECTABLE_MAX_DIS
         is_obtainable = False
         
-        # lcam_frame = q_lcam.get()
         lcam_frame, _ = lcam.read_image_buffer()
         lcam_results = self.ball_model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
         lcam_annotated_frame = lcam_results[0].plot()
-        names = lcam_results[0].names
-        classes = lcam_results[0].boxes.cls
-        boxes = lcam_results[0].boxes
-        
+        lcam_names = lcam_results[0].names
+        lcam_classes = lcam_results[0].boxes.cls
+        lcam_boxes = lcam_results[0].boxes
+        lcam.save_image("red", lcam_frame, lcam_classes, lcam_boxes.xywhn)
+
         ucam_frame, _ = ucam.read_image_buffer()
         ucam_results = self.ball_model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
         ucam_annotated_frame = ucam_frame
         ucam_annotated_frame = ucam_results[0].plot()
+        ucam_names = ucam_results[0].names
+        ucam_classes = ucam_results[0].boxes.cls
+        ucam_boxes = ucam_results[0].boxes
+        ucam.save_image("red", ucam_frame, ucam_classes, ucam_boxes.xywhn)
+        
+        boxes = lcam_results[0].boxes
         
         # もし、下部カメラで検出できていれば
-        if classes.dim() > 0:
-            for box, cls in zip(boxes, classes):
-                name = names[int(cls)]
-                if name == "blueball" :
+        if lcam_classes.dim() > 0:
+            for box, cls in zip(lcam_boxes, lcam_classes):
+                name = lcam_names[int(cls)]
+                if name == "redball" :
                     x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
                     # 長方形の長辺を籾の半径とする
                     r = max(abs(x1-x2)/2, abs(y1-y2)/2)
@@ -499,15 +472,11 @@ class DetectObj:
                     if z < paddy_rice_z:
                         (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int((x1+x2)/2),int((y1+y2)/2),z)
             is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-            
         else:
-            pass
-            names = ucam_results[0].names
-            classes = ucam_results[0].boxes.cls
             boxes = ucam_results[0].boxes
-            for box, cls in zip(boxes, classes):
-                name = names[int(cls)]
-                if(name == "blueball"):
+            for box, cls in zip(ucam_boxes, ucam_classes):
+                name = ucam_names[int(cls)]
+                if(name == "redball"):
                     x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
                     # 長方形の長辺を籾の半径とする
                     r = max(abs(x1-x2)/2, abs(y1-y2)/2)
@@ -518,20 +487,25 @@ class DetectObj:
             is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
         
         show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
+        
         # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
         output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-        q_out.put((show_frame, OUTPUT_ID.BALL))
         self.ball_camera_out = output_data
+        
+        q_out.put((show_frame, OUTPUT_ID.BALL))
+        
+        # print("[DetectObj.ball_detect]: finish")
         
     # 後方カメラでサイロを監視
     def silo_detect(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
-        frame, _ = lcam.read_image_buffer()
+        frame, _ = ucam.read_image_buffer()
         results = self.silo_model.predict(frame, imgsz=320, conf=0.5, verbose=False)
         annotated_frame = results[0].plot()
         names = results[0].names
         classes = results[0].boxes.cls
         boxes = results[0].boxes
         x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
+        ucam.save_image("silo", frame, classes, boxes.xywhn)
         maximum_my_ball_in_silo_count = 0
         target_silo_x=0
         target_silo_y=0
@@ -563,7 +537,7 @@ class DetectObj:
                 w = (x1+x2)/2
                 h = (y1+y2)/2
                 dis = calc_distance(abs(y1-y2),SILO_HEIGHT)
-                (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(lcam.params,w,h,dis)
+                (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(ucam.params,w,h,dis)
                 maximum_my_ball_in_silo_count = my_ball_in_silo_counter
         
         output_data = (target_silo_x,target_silo_y,target_silo_z)
@@ -633,55 +607,55 @@ class DetectObj:
             except KeyboardInterrupt:
                 break
             
-    # 後方カメラでサイロを監視
-    def detecting_silo(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
-        while True:
-            try:
-                frame, _ = lcam.read_image_buffer()
-                results = self.silo_model.predict(frame, imgsz=320, conf=0.5, verbose=False)
-                annotated_frame = results[0].plot()
-                names = results[0].names
-                classes = results[0].boxes.cls
-                boxes = results[0].boxes
-                x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
-                maximum_my_ball_in_silo_count = 0
-                target_silo_x=0
-                target_silo_y=0
-                target_silo_z=0
+    # # 後方カメラでサイロを監視
+    # def detecting_silo(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+    #     while True:
+    #         try:
+    #             frame, _ = ucam.read_image_buffer()
+    #             results = self.silo_model.predict(frame, imgsz=320, conf=0.5, verbose=False)
+    #             annotated_frame = results[0].plot()
+    #             names = results[0].names
+    #             classes = results[0].boxes.cls
+    #             boxes = results[0].boxes
+    #             x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
+    #             maximum_my_ball_in_silo_count = 0
+    #             target_silo_x=0
+    #             target_silo_y=0
+    #             target_silo_z=0
         
-                # ballのx1,y1,x2,y2を入れる
-                ball_xyz = np.empty((0,4), int)
+    #             # ballのx1,y1,x2,y2を入れる
+    #             ball_xyz = np.empty((0,4), int)
                 
-                for box, cls in zip(boxes, classes):
-                    name = names[int(cls)]
-                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    if(name == "blueball"):
-                        try:
-                            ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2]],axis=0)
-                        except Exception as err:
-                            print(f"This is inference_for_silo function in DetectObj class\nUnexpected {err=}, {type(err)=}")
+    #             for box, cls in zip(boxes, classes):
+    #                 name = names[int(cls)]
+    #                 x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+    #                 if(name == "blueball"):
+    #                     try:
+    #                         ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2]],axis=0)
+    #                     except Exception as err:
+    #                         print(f"This is inference_for_silo function in DetectObj class\nUnexpected {err=}, {type(err)=}")
                 
-                for box, cls in zip(boxes, classes):
-                    name = names[int(cls)]
-                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    my_ball_in_silo_counter = 0
-                    if(name == "silo"):
-                        for bxyz in ball_xyz:
-                            if(x1<bxyz[0] and bxyz[2]<x2 and bxyz[3]<y2 and abs((x2-x1)-(bxyz[2]-bxyz[0]))<BALL_IN_SILO_THRESHOLD):
-                                my_ball_in_silo_counter += 1
-                        cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
+    #             for box, cls in zip(boxes, classes):
+    #                 name = names[int(cls)]
+    #                 x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+    #                 my_ball_in_silo_counter = 0
+    #                 if(name == "silo"):
+    #                     for bxyz in ball_xyz:
+    #                         if(x1<bxyz[0] and bxyz[2]<x2 and bxyz[3]<y2 and abs((x2-x1)-(bxyz[2]-bxyz[0]))<BALL_IN_SILO_THRESHOLD):
+    #                             my_ball_in_silo_counter += 1
+    #                     cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
                     
-                    if maximum_my_ball_in_silo_count < my_ball_in_silo_counter:
-                        w = (x1+x2)/2
-                        h = (y1+y2)/2
-                        dis = calc_distance(abs(y1-y2),SILO_HEIGHT)
-                        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(lcam.params,w,h,dis)
-                        maximum_my_ball_in_silo_count = my_ball_in_silo_counter
+    #                 if maximum_my_ball_in_silo_count < my_ball_in_silo_counter:
+    #                     w = (x1+x2)/2
+    #                     h = (y1+y2)/2
+    #                     dis = calc_distance(abs(y1-y2),SILO_HEIGHT)
+    #                     (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(ucam.params,w,h,dis)
+    #                     maximum_my_ball_in_silo_count = my_ball_in_silo_counter
                 
-                output_data = (target_silo_x,target_silo_y,target_silo_z)
-                q_out.put((annotated_frame, OUTPUT_ID.SILO))
-                #if self.save_movie:
-                    #rcam.write(annotated_frame)
-                self.silo_camera_out = output_data
-            except KeyboardInterrupt:
-                break
+    #             output_data = (target_silo_x,target_silo_y,target_silo_z)
+    #             q_out.put((annotated_frame, OUTPUT_ID.SILO))
+    #             #if self.save_movie:
+    #                 #rcam.write(annotated_frame)
+    #             self.silo_camera_out = output_data
+    #         except KeyboardInterrupt:
+    #             break

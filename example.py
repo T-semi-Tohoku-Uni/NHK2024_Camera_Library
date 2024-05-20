@@ -4,9 +4,9 @@ from src.capture_and_detect import MainProcess
 
 if __name__ == "__main__":
     # model_path = 'models/20240109best.pt'
-    blue_model_path = 'models/yolov8n.pt'
-    red_model_path = 'models/yolov8n.pt'
-    silo_model_path = 'models/yolov8n.pt'
+    blue_model_path = 'models/NHK2024_blue_ball_model/blue_ball_model.pt'
+    red_model_path = 'models/NHK2024_red_ball_model/red_ball_model.pt'
+    silo_model_path = 'models/NHK2024_silo_model/silo_model.pt'
     
     # メインプロセスを実行するクラス
     print("create main instance")
@@ -20,16 +20,18 @@ if __name__ == "__main__":
     print("start thread")
     mainprocess.thread_start()
     print("complete start thread")
-    
+    cnt = 0
     while True:
-        print("loop")
         try:
             # if mainprocess.detector.show:   
-            frame, id = mainprocess.q_out.get() 
-            cv2.imshow(f'{id}', frame)
-            key = cv2.waitKey(1)
-            if key == ord("q"):
-                break
+            # frame, id = mainprocess.q_out.get() 
+            # # cv2.imshow(f'{id}', frame)
+            # key = cv2.waitKey(1)
+            # if key == ord("q"):
+            #     break
+            
+            _, _= mainprocess.q_out.get()
+            continue
             
             # items,x,y,z,is_obtainable = mainprocess.update_ball_camera_out()
             # x,y,z = mainprocess.update_silo_camera_out()

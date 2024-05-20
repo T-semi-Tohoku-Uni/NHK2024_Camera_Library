@@ -18,10 +18,12 @@ class MainProcess:
             show=False, 
             save_movie=False,
         ):
+        print("[MainProcess.init]: start")
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S%f")[:-3]
         
         # Get target device
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f"[MainProcess.init]: device is {device}")
         
         # 最大使用率を設定
         # max_usage = 0.45
@@ -41,29 +43,44 @@ class MainProcess:
        )
         
         # self.ucam = UpperCamera(f"{timestamp}")
+        # self.ucam = RealsenseObject(
+        #     timestamp=f"{timestamp}",
+        #     serial_number='944122072123',
+        #     focal_length=270,
+        #     pos_x=70,
+        #     pos_y=465,
+        #     pos_z=800,
+        #     theta_x = 40*np.pi/180,
+        #     theta_y = 0,
+        #     theta_z = 0,
+        #     saved_image_dir="image_log/"
+        # )
         self.ucam = RealsenseObject(
             timestamp=f"{timestamp}",
-            serial_number='242622071603',
+            serial_number='944122072123',
             focal_length=270,
             pos_x=-155,
             pos_y=430,
             pos_z=100,
             theta_x = 10*np.pi/180,
             theta_y = 0,
-            theta_z = 0
+            theta_z = 0,
+            saved_image_dir="image_log/"
         )
         # self.lcam = LowerCamera(f"{timestamp}")
+        # 上についてるカメラ（ボール認識のみに使用）
         self.lcam = RealsenseObject(
             timestamp=f"{timestamp}",
-            serial_number='944122072123',
+            serial_number='242622071603',
             focal_length=270,
-            pos_x=0,
-            pos_y=300,
-            pos_z=-150,
-            theta_x=0,
-            theta_y=0,
-            theta_z=0
-            )
+            pos_x=70,
+            pos_y=800,
+            pos_z=100,
+            theta_x = 60*np.pi/180,
+            theta_y = 0,
+            theta_z = 0,
+            saved_image_dir="image_log/"
+        )
 
         self.thread_upper_capture = threading.Thread()
         self.thread_lower_capture = threading.Thread()
@@ -81,28 +98,30 @@ class MainProcess:
         
     # カメラからの画像取得と画像処理、推論(デプス無し)をスレッドごとに分けて実行      
     def thread_start(self):
+        print("[MainProcess.thread_start]: start")
         # self.thread_upper_capture = threading.Thread(target=self.detector.capturing, args=(self.q_upper_in,self.ucam), daemon=True)
-        self.thread_upper_capture = self.ucam.capture_thread
+        # self.thread_upper_capture = self.ucam.capture_thread
+        self.thread_upper_capture = threading.Thread(target=self.ucam.capture, daemon=True).start()
         # self.thread_lower_capture = threading.Thread(target=self.detector.capturing, args=(self.q_lower_in,self.lcam), daemon=True)
-        self.thread_lower_capture = self.lcam.capture_thread
-        self.thread_front_detector = threading.Thread(
-            target=self.detector.detecting_ball, 
-            args=(
-                self.ucam,
-                self.lcam,
-                self.q_out
-            ),
-            daemon=True
-        )
-        self.thread_silo_detector = threading.Thread(
-            target=self.detector.detecting_silo,
-            args=(
-                self.ucam,
-                self.lcam,
-                self.q_out
-            ),
-            daemon=True
-        )
+        self.thread_lower_capture = threading.Thread(target=self.lcam.capture, daemon=True).start()
+        # self.thread_front_detector = threading.Thread(
+        #     target=self.detector.detecting_ball, 
+        #     args=(
+        #         self.ucam,
+        #         self.lcam,
+        #         self.q_out
+        #     ),
+        #     daemon=True
+        # )
+        # self.thread_silo_detector = threading.Thread(
+        #     target=self.detector.detecting_silo,
+        #     args=(
+        #         self.ucam,
+        #         self.lcam,
+        #         self.q_out
+        #     ),
+        #     daemon=True
+        # )
         
         self.thread_detector = threading.Thread(
             target=self.detector.detecting,
@@ -112,13 +131,14 @@ class MainProcess:
                 self.q_out
             ),
             daemon=True
-        )
+        ).start()
         
-        self.thread_upper_capture.start()
-        self.thread_lower_capture.start()
-        self.thread_detector.start()
+        # self.thread_upper_capture.start()
+        # self.thread_lower_capture.start()
+        # self.thread_detector.start()
         # self.thread_front_detector.start()
         # self.thread_silo_detector.start()
+        print("[MainProcess.thread_start]: complete")
         
     def update_ball_camera_out(self):
         return self.detector.ball_camera_out

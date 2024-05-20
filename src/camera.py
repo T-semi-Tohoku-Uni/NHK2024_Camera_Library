@@ -10,6 +10,7 @@ import ctypes
 from typing import Tuple
 import sys
 from threading import Thread
+import os
 
 # カメラからの画像の幅と高さ[pxl]
 FRAME_WIDTH = 320
@@ -91,6 +92,7 @@ class RealsenseObject:
             theta_x,
             theta_y,
             theta_z,
+            saved_image_dir=None,
         ):
         try:
             self.__serial_number = serial_number
@@ -148,7 +150,8 @@ class RealsenseObject:
         # 最新の画像を載せる共有メモリの変数
         self.__image_buffer = ImageSharedMemory((FRAME_HEIGHT, FRAME_WIDTH, 3))
 
-        self.capture_thread = Thread(target=self.capture, daemon=True)
+        # self.capture_thread = Thread(target=self.capture, daemon=True)
+        self.saved_dir = saved_image_dir
         
     # カメラのキャプチャー, 別のプロセスで動かす
     def capture(self):
@@ -181,10 +184,43 @@ class RealsenseObject:
         depth_image = self.__image_buffer.read_depth()
         return (color_image, depth_image)
     
+    def save_image(
+        self, 
+        dir: str, 
+        frame: np.ndarray,
+        classes=None,
+        xywhn=None
+    ):
+        if self.saved_dir is None:
+            raise ValueError("You must set saved_image_dir when creating instance")
+        
+        base_dir = os.path.join(self.saved_dir, self.__serial_number, dir)
+        saved_image_dir = os.path.join(base_dir, "image")
+        timestamp = time.time()
+        if not os.path.exists(saved_image_dir):
+            os.makedirs(saved_image_dir)
+        
+        cv2.imwrite(os.path.join(saved_image_dir, f"{str(timestamp)}.jpg"), frame)
+        
+        if classes is None:
+            return
+        
+        if xywhn is None:
+            return
+    
+        saved_bounding_box_dir = os.path.join(base_dir, "box")
+        if not os.path.exists(saved_bounding_box_dir):
+            os.makedirs(saved_bounding_box_dir)
+        
+        with open(os.path.join(saved_bounding_box_dir, f"{str(timestamp)}.txt"), mode="w") as f:
+            for index, cls in enumerate(classes):
+                f.write(f"{int(cls)} {(xywhn[index][0])} {xywhn[index][1]} {xywhn[index][2]} {xywhn[index][3]}\n")
+        
+    
     def release(self):
         self.pipeline.stop()
         # self.output_file.release()
-        print(f"RearCamera : {self.counter/(time.time()-self.start_time)}fps")
+        print(f"{self.__serial_number} : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")
     
     def isOpened(self):
