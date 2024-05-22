@@ -75,8 +75,8 @@ class MainProcess:
             focal_length=270,
             pos_x=70,
             pos_y=800,
-            pos_z=100,
-            theta_x = 60*np.pi/180,
+            pos_z=200,
+            theta_x = 35*np.pi/180,
             theta_y = 0,
             theta_z = 0,
             saved_image_dir="image_log/"

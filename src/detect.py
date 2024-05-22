@@ -9,6 +9,7 @@ from queue import Queue
 from .camera import RealsenseObject
 from torch import Tensor
 import typing
+import time
 
 # Camera Frame Width and Height[pxl]
 FRAME_WIDTH = 320
@@ -53,8 +54,8 @@ LOWER_CIRCULARITY_THRESHOLD=0.2
 
 # ロボット座標におけるアームのファンで吸い込めるエリアの中心と半径[mm]
 OBTAINABE_AREA_CENTER_X = 0
-OBTAINABE_AREA_CENTER_Y = 525
-OBTAINABE_AREA_RADIUS = 80
+OBTAINABE_AREA_CENTER_Y = 760
+OBTAINABE_AREA_RADIUS = 50
 
 # カメラからラインの検出点までの距離[mm]
 LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 990
@@ -438,18 +439,57 @@ def find_closest_ball_coordinates(
             
     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
     return (len(target_boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+
+class Silo:
+    def __init__(self, x1, y1, x2, y2):
+        # 自分のサイロの座標
+        self.x1 = x1
+        self.y1 = y1
+        self.x2 = x2
+        self.y2 = y2
+
+        # それぞれの入っているボールの数
+        self.__my_team_ball_cnt = 0
+        self.__opponent_team_cnt = 0
+        
+        # TODO: 下から順にボールが入っているリスト
     
+    def is_ball_in(self, ball_x, ball_y, is_my_team_ball):
+        min_x, max_x = min(self.x1, self.x2), max(self.x1, self.x2)
+        min_y, max_y = min(self.y1, self.y2), max(self.y1, self.y2)
+
+        inside_points = []
+        if min_x < ball_x and ball_x < max_x and min_y < ball_y and ball_y < max_y:
+            inside_points.append((ball_x, ball_y))
+
+            if is_my_team_ball:
+                self.__my_team_ball_cnt += 1
+            else:
+                self.__opponent_team_cnt += 1
+    
+    def get_my_team_ball_cnt(self):
+        return self.__my_team_ball_cnt
+    
+    def get_opponent_team_cnt(self):
+        return self.__opponent_team_cnt
+    
+    def get_position(self):
+        return (self.x1+self.x2)/2, (self.y1+self.y2)/2
+     
+    def __str__(self):
+        return f"Box(({self.__my_team_ball_cnt}, {self.__opponent_team_cnt})"  
+        
 class DetectObj:
     def __init__(self, ball_model: YOLO, silo_model: YOLO):
         self.ball_model = ball_model
         self.silo_model = silo_model
 
         # preload model to GPU
-        preload_thread = threading.Thread(
-            target = self.preload, daemon=True
-        ).start()
+        # preload_thread = threading.Thread(
+        #     target = self.preload, daemon=True
+        # ).start()
         self.ball_camera_out = (0,0.0,0.0,DETECTABLE_MAX_DIS,False)
-        self.silo_camera_out = (0.0,0.0,0.0)
+        self.silo_camera_out = []
         self.line_camera_out = (False,False,False,0.0,0.0)
         
         # TODO
@@ -479,12 +519,7 @@ class DetectObj:
                 print(f"{e}")
     
     def ball_detect(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
-        # print("[DetectObj.ball_detect]: start")
-        # paddy_rice_x = 0
-        # paddy_rice_y = 0
-        # paddy_rice_z = DETECTABLE_MAX_DIS
-        # is_obtainable = False
-        
+        # 上についているカメラ（近くのボールを見つける）やつ
         lcam_frame, _ = lcam.read_image_buffer()
         lcam_results = self.ball_model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
         lcam_annotated_frame = lcam_results[0].plot()
@@ -493,6 +528,7 @@ class DetectObj:
         lcam_boxes = lcam_results[0].boxes
         lcam.save_image("red", lcam_frame, lcam_classes, lcam_boxes.xywhn)
 
+        # 下についているカメラ（遠くのボールを見つける）やつ
         ucam_frame, _ = ucam.read_image_buffer()
         ucam_results = self.ball_model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
         ucam_annotated_frame = ucam_frame
@@ -527,52 +563,70 @@ class DetectObj:
         
         # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
         self.ball_camera_out = ball_coordinates
-        print(ball_coordinates)
+        # print(ball_coordinates)
         
         # デバッグで使うカメラキャプチャ画像の出力用
         show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
         q_out.put((show_frame, OUTPUT_ID.BALL))
+
         
-        # # もし、下部カメラで検出できていれば
-        # print(lcam_classes)
-        # if lcam_classes.dim() > 0:
-        #     for box, cls in zip(lcam_boxes, lcam_classes):
-        #         name = lcam_names[int(cls)]
-        #         if name == "redball" :
-        #             x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-        #             # 長方形の長辺を籾の半径とする
-        #             r = max(abs(x1-x2)/2, abs(y1-y2)/2)
-        #             z = calc_distance(r, PADDY_RICE_RADIUS)
-        #             # 籾が複数ある場合は最も近いものの座標を返す
-        #             if z < paddy_rice_z:
-        #                 (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int((x1+x2)/2),int((y1+y2)/2),z)
-        #     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-        # else:
-        #     boxes = ucam_results[0].boxes
-        #     for box, cls in zip(ucam_boxes, ucam_classes):
-        #         name = ucam_names[int(cls)]
-        #         if(name == "redball"):
-        #             x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-        #             # 長方形の長辺を籾の半径とする
-        #             r = max(abs(x1-x2)/2, abs(y1-y2)/2)
-        #             z = calc_distance(r, PADDY_RICE_RADIUS)
-        #             # 籾が複数ある場合は最も近いものの座標を返す
-        #             if z < paddy_rice_z:
-        #                 (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int((x1+x2)/2),int((y1+y2)/2),z)
-        #     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+    def silo_detect(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue, my_team_color="redball", opponent_team_color="blueball"):
+        # サイロの画像を取得する
+        frame, _ = ucam.read_image_buffer()
+        results = self.silo_model.predict(frame, imgsz=320, conf=0.5, verbose=False)
+        annotated_frame = results[0].plot()
+        names = results[0].names
+        classes = results[0].boxes.cls
+        boxes = results[0].boxes
         
-        # show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
+        # サイロの座標（(x1, y1), (x2, y2)）を取得する（TODO: x?座標でソート）
+        silo_boxes: list[Boxes] = [
+            box for box, cl in zip(boxes, classes) if names[int(cl)] == "silo"
+        ]
+        # サイロのインスタンスを一つずつ立てる
+        silo_lists: typing.List[Silo] = []
+        for silo_box in silo_boxes:
+            x1, y1, x2, y2 = silo_box.xyxy[0]
+            silo_lists.append(
+                Silo(x1=x1, y1=y1, x2=x2, y2=y2)
+            )
         
-        # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-        # output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-        # self.ball_camera_out = output_data
+        # 自分のチームのボールの座標 ((x1, y1), (x2, y2))を取得する
+        my_team_ball_box_in_silo = [
+            box for box, cl in zip(boxes, classes) if names[int(cl)] == my_team_color
+        ]
+        # サイロの状態を更新
+        for my_ball_box in my_team_ball_box_in_silo:
+            for silo in silo_lists:
+                x1, y1, x2, y2 = my_ball_box.xyxy[0]
+                silo.is_ball_in(ball_x = (x1 + x2)/2, ball_y = (y1 + y2)/2, is_my_team_ball = True)
         
-        # q_out.put((show_frame, OUTPUT_ID.BALL))
+        # 相手チームのボールの座標 ((x1, y1), (x2, y2))を取得する
+        opponent_team_in_silo = [
+            box for box, cl in zip(boxes, classes) if names[int(cl)] == opponent_team_color
+        ]
+        # サイロの状態を更新
+        for opponent_ball_box in opponent_team_in_silo:
+            for silo in silo_lists:
+                x1, y1, x2, y2 = opponent_ball_box.xyxy[0]
+                silo.is_ball_in(ball_x = (x1 + x2)/2, ball_y = (y1 + y2)/2, is_my_team_ball = False)
         
-        # print("[DetectObj.ball_detect]: finish")
+        # print("#"*100)
+        # for silo in silo_lists:
+        #     print(silo)
+        # print("#"*100)
+            
+        # TODO: 出力をいい感じにする
         
+        q_out.put((frame, OUTPUT_ID.SILO))
+        self.silo_camera_out = silo_lists
+
+        # TODO: 消す
+        # time.sleep(1)
+        
+            
     # 後方カメラでサイロを監視
-    def silo_detect(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+    def silo_detect_temp(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
         frame, _ = ucam.read_image_buffer()
         results = self.silo_model.predict(frame, imgsz=320, conf=0.5, verbose=False)
         annotated_frame = results[0].plot()
@@ -621,66 +675,66 @@ class DetectObj:
             #rcam.write(annotated_frame)
         self.silo_camera_out = output_data
                 
-    def detecting_ball(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
-        while True:
-            try:
-                paddy_rice_x = 0
-                paddy_rice_y = 0
-                paddy_rice_z = DETECTABLE_MAX_DIS
-                is_obtainable = False
+    # def detecting_ball(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+    #     while True:
+    #         try:
+    #             paddy_rice_x = 0
+    #             paddy_rice_y = 0
+    #             paddy_rice_z = DETECTABLE_MAX_DIS
+    #             is_obtainable = False
                 
-                # lcam_frame = q_lcam.get()
-                lcam_frame, _ = lcam.read_image_buffer()
-                lcam_results = self.ball_model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
-                lcam_annotated_frame = lcam_results[0].plot()
-                names = lcam_results[0].names
-                classes = lcam_results[0].boxes.cls
-                boxes = lcam_results[0].boxes
+    #             # lcam_frame = q_lcam.get()
+    #             lcam_frame, _ = lcam.read_image_buffer()
+    #             lcam_results = self.ball_model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
+    #             lcam_annotated_frame = lcam_results[0].plot()
+    #             names = lcam_results[0].names
+    #             classes = lcam_results[0].boxes.cls
+    #             boxes = lcam_results[0].boxes
                 
-                ucam_frame, _ = ucam.read_image_buffer()
-                ucam_results = self.ball_model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
-                ucam_annotated_frame = ucam_frame
-                ucam_annotated_frame = ucam_results[0].plot()
+    #             ucam_frame, _ = ucam.read_image_buffer()
+    #             ucam_results = self.ball_model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
+    #             ucam_annotated_frame = ucam_frame
+    #             ucam_annotated_frame = ucam_results[0].plot()
                 
-                # もし、下部カメラで検出できていれば
-                if classes.dim() > 0:
-                    for box, cls in zip(boxes, classes):
-                        name = names[int(cls)]
-                        if name == "blueball" :
-                            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                            # 長方形の長辺を籾の半径とする
-                            r = max(abs(x1-x2)/2, abs(y1-y2)/2)
-                            z = calc_distance(r, PADDY_RICE_RADIUS)
-                            # 籾が複数ある場合は最も近いものの座標を返す
-                            if z < paddy_rice_z:
-                                (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int((x1+x2)/2),int((y1+y2)/2),z)
-                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+    #             # もし、下部カメラで検出できていれば
+    #             if classes.dim() > 0:
+    #                 for box, cls in zip(boxes, classes):
+    #                     name = names[int(cls)]
+    #                     if name == "blueball" :
+    #                         x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+    #                         # 長方形の長辺を籾の半径とする
+    #                         r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+    #                         z = calc_distance(r, PADDY_RICE_RADIUS)
+    #                         # 籾が複数ある場合は最も近いものの座標を返す
+    #                         if z < paddy_rice_z:
+    #                             (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int((x1+x2)/2),int((y1+y2)/2),z)
+    #                 is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                     
-                else:
-                    pass
-                    names = ucam_results[0].names
-                    classes = ucam_results[0].boxes.cls
-                    boxes = ucam_results[0].boxes
-                    for box, cls in zip(boxes, classes):
-                        name = names[int(cls)]
-                        if(name == "blueball"):
-                            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                            # 長方形の長辺を籾の半径とする
-                            r = max(abs(x1-x2)/2, abs(y1-y2)/2)
-                            z = calc_distance(r, PADDY_RICE_RADIUS)
-                            # 籾が複数ある場合は最も近いものの座標を返す
-                            if z < paddy_rice_z:
-                                (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int((x1+x2)/2),int((y1+y2)/2),z)
-                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+    #             else:
+    #                 pass
+    #                 names = ucam_results[0].names
+    #                 classes = ucam_results[0].boxes.cls
+    #                 boxes = ucam_results[0].boxes
+    #                 for box, cls in zip(boxes, classes):
+    #                     name = names[int(cls)]
+    #                     if(name == "blueball"):
+    #                         x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+    #                         # 長方形の長辺を籾の半径とする
+    #                         r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+    #                         z = calc_distance(r, PADDY_RICE_RADIUS)
+    #                         # 籾が複数ある場合は最も近いものの座標を返す
+    #                         if z < paddy_rice_z:
+    #                             (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int((x1+x2)/2),int((y1+y2)/2),z)
+    #                 is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                 
-                show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
-                # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
-                output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                q_out.put((show_frame, OUTPUT_ID.BALL))
-                self.ball_camera_out = output_data
+    #             show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
+    #             # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+    #             output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+    #             q_out.put((show_frame, OUTPUT_ID.BALL))
+    #             self.ball_camera_out = output_data
             
-            except KeyboardInterrupt:
-                break
+    #         except KeyboardInterrupt:
+    #             break
             
     # # 後方カメラでサイロを監視
     # def detecting_silo(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
