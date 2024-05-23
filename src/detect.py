@@ -1,9 +1,16 @@
 import numpy as np
 import cv2
 from ultralytics import YOLO
+from ultralytics.engine.results import Boxes
 import threading
 import queue
 from enum import Enum
+from queue import Queue
+from .camera import RealsenseObject
+from torch import Tensor
+import torch
+import typing
+import time
 
 # Camera Frame Width and Height[pxl]
 FRAME_WIDTH = 320
@@ -48,7 +55,7 @@ LOWER_CIRCULARITY_THRESHOLD=0.2
 
 # ロボット座標におけるアームのファンで吸い込めるエリアの中心と半径[mm]
 OBTAINABE_AREA_CENTER_X = 0
-OBTAINABE_AREA_CENTER_Y = 525
+OBTAINABE_AREA_CENTER_Y = 760
 OBTAINABE_AREA_RADIUS = 80
 
 # カメラからラインの検出点までの距離[mm]
@@ -164,13 +171,26 @@ def image_to_robot_coordinate_transformation(params,w, h, dis):
     
     """
     (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,_) = params
-    internal_param_inv = np.array([[1/focal_length, 0, 0], [0,1/focal_length, 0], [0, 0, 1] ,[0, 0, 1/dis]])
-    external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), pos_x],
-                        [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), pos_y],
-                        [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), pos_z],
-                        [0, 0, 0, 1]])
+    
+    focal_length = torch.tensor(focal_length)
+    pos_x = torch.tensor(pos_x)
+    pos_y = torch.tensor(pos_y)
+    pos_z = torch.tensor(pos_z)
+    theta_x = torch.tensor(theta_x)
+    theta_y = torch.tensor(theta_y)
+    theta_z = torch.tensor(theta_z)
+    
+    internal_param_inv = torch.tensor([[1/focal_length, 0, 0], [0,1/focal_length, 0], [0, 0, 1] ,[0, 0, 1/dis]])
+    external_param = torch.tensor(
+        [
+            [torch.cos(theta_z)*torch.cos(theta_y), torch.cos(theta_z)*torch.sin(theta_y)*torch.sin(theta_x)-torch.sin(theta_z)*torch.cos(theta_x), torch.cos(theta_z)*torch.sin(theta_y)*torch.cos(theta_x)+torch.sin(theta_z)*torch.sin(theta_x), pos_x],
+            [torch.sin(theta_z)*torch.cos(theta_y), torch.sin(theta_z)*torch.sin(theta_y)*torch.sin(theta_x)+torch.cos(theta_z)*torch.cos(theta_x), torch.sin(theta_z)*torch.sin(theta_y)*torch.cos(theta_x)-torch.cos(theta_z)*torch.sin(theta_x), pos_y],
+            [-torch.sin(theta_y), torch.cos(theta_y)*torch.sin(theta_x), torch.cos(theta_y)*torch.cos(theta_x), pos_z],
+            [0, 0, 0, 1]
+        ]
+    )
     # Opencvの座標でいう(FRAME_WIDTH/2, FRAME_HEIGHT/2)が(0,0)になるよう平行移動
-    Target = np.array([[(w-FRAME_WIDTH/2)*dis], [(-h+FRAME_HEIGHT/2)*dis], [dis]])
+    Target = torch.tensor([[(w-FRAME_WIDTH/2)*dis], [(-h+FRAME_HEIGHT/2)*dis], [dis]])
     
     coordinate = external_param @ internal_param_inv @ Target 
     
@@ -390,286 +410,420 @@ def detect_horizon_vertical(original_line_list, line_type, cam_param, line_detec
         
     return output
 
-
-class DetectObj:
-    def __init__(self,model_path):
-        # YOLOv8 modelのロード
-        # self.model = YOLO(ncnn_model_path, task='detect')
-        self.model = YOLO(model_path)
-        
-        # maskの値を設定する
-        self.blue_lower_mask = np.array([138, 0, 20])
-        self.blue_upper_mask = np.array([163, 255, 255])
-        self.purple_lower_mask = np.array([165,40,40])
-        self.purple_upper_mask = np.array([230,250,250])
-        self.red_lower_mask_1 = np.array([0,40,40])
-        self.red_upper_mask_1 = np.array([10,255,255])
-        self.red_lower_mask_2 = np.array([230,40,40])
-        self.red_upper_mask_2 = np.array([255,255,255])
-        self.white_lower_mask = np.array([0,120,80])
-        self.white_upper_mask = np.array([255,255,255])
-        
-        # fast line detector
-        self.fld = cv2.ximgproc.createFastLineDetector(length_threshold=40,distance_threshold=1.41421356,canny_th1=180.0,canny_th2=180.0,canny_aperture_size=3,do_merge=True)
+def find_closest_ball_coordinates(
+    target_ball_color,
+    names,
+    classes: Tensor, 
+    boxes: Boxes,
+    camera_params: tuple
+) -> typing.Tuple[int, int, int, int, bool]:
+    '''
+    names: ラベルと文字がペアで入っている。names[0] = "redball"みたいな
+    classes: 検出したラベルがTensor型で入る。例えば「赤, 赤, 紫」を検出した場合は「1, 1, 0」が入る
+    '''
+    
+    # 一番近いボールの座標をpaddy_rice_x ...に入れるらしい
+    paddy_rice_x = 0
+    paddy_rice_y = 0
+    paddy_rice_z = DETECTABLE_MAX_DIS
+    is_obtainable = False
+    
+    # 赤のボールのboxesだけ取得する
+    target_boxes: list[Boxes] = [
+        box for box, cl in zip(boxes, classes) if names[int(cl)] == target_ball_color
+    ]
+    
+    if len(target_boxes) == 0:
+        return (len(target_boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
      
+    # 空の場合
+    if not target_boxes:
+        return None
+    
+    # 前回認識したボール座標に近いものを一番近いボールと認識する
+    for box in target_boxes:
+        x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+        
+        # 長方形の長辺を籾の半径とする
+        r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+        z = calc_distance(r, PADDY_RICE_RADIUS)
+        
+        # 籾が複数ある場合は最も近いものの座標を返す
+        if z < paddy_rice_z: # TODO: これあっているのか確認する
+            (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(camera_params,int((x1+x2)/2),int((y1+y2)/2),z)
+            
+    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
+    return (len(target_boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+
+# 遠くまで見るカメラ
+def ucam_ball_detect_algorithm(x1, y1, x2, y2, last_x=None, last_y=None):
+    
+    pass
+
+# 近くだけ見るカメラ
+def lcam_ball_detect_algorithm(x1, y1, x2, y2, last_x=None, last_y=None):
+    pass
+
+class Silo:
+    def __init__(self, x1, y1, x2, y2):
+        # 自分のサイロの座標
+        self.x1 = x1
+        self.y1 = y1
+        self.x2 = x2
+        self.y2 = y2
+        # それぞれの入っているボールの数
+        self.__my_team_ball_cnt = 0
+        self.__opponent_team_cnt = 0
+        self.pos = (0, 400, 0)
+        # TODO: 下から順にボールが入っているリスト
+    
+    def is_ball_in(self, ball_x, ball_y, is_my_team_ball):
+        min_x, max_x = min(self.x1, self.x2), max(self.x1, self.x2)
+        min_y, max_y = min(self.y1, self.y2), max(self.y1, self.y2)
+
+        inside_points = []
+        if min_x < ball_x and ball_x < max_x:
+            inside_points.append((ball_x, ball_y))
+
+            if is_my_team_ball:
+                self.__my_team_ball_cnt += 1
+            else:
+                self.__opponent_team_cnt += 1
+    
+    def get_my_team_ball_cnt(self):
+        return self.__my_team_ball_cnt
+    
+    def get_opponent_team_cnt(self):
+        return self.__opponent_team_cnt
+    
+    def update_position(self, params):
+        w = (self.x1+self.x2)/2
+        h = (self.y1+self.y2)/2
+        dis = calc_distance(abs(self.y1-self.y2),SILO_HEIGHT)
+        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(params,w,h,dis)
+        self.pos = (target_silo_x,target_silo_y,target_silo_z)
+        return self.pos
+     
+    def __str__(self):
+        return f"Box(({self.__my_team_ball_cnt}, {self.__opponent_team_cnt})"  
+        
+class DetectObj:
+    def __init__(self, ball_model: YOLO, silo_model: YOLO):
+        self.ball_model = ball_model
+        self.silo_model = silo_model
+
+        # preload model to GPU
+        # preload_thread = threading.Thread(
+        #     target = self.preload, daemon=True
+        # ).start()
         self.ball_camera_out = (0,0.0,0.0,DETECTABLE_MAX_DIS,False)
-        self.silo_camera_out = (0.0,0.0,0.0)
+        self.silo_camera_out = []
         self.line_camera_out = (False,False,False,0.0,0.0)
         
+        # 前のフレームで取得したボールのカメラ座標. 何も認識していなかったらNone. あればその座標が入っている
+        self.__last_ball_camera_x = None
+        self.__last_ball_camera_y = None
+        
+        # TODO
         # 画像表示するかどうか（q_outに画像とidを入れる
-        self.show = False
+        self.show = True
         # 動画保存するかどうか
         self.save_movie = False
         
-    # 画像を取得してキューに入れる
-    def capturing(self, q_frames, cap):
+        print("Complete DetectObj Initialize")
+    
+    def preload(self):
+        print("[Start]: preload ball model")
+        self.ball_model.predict(np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8))
+        print("[Complete]: preload ball model")
+        
+        print("[Start]: preload silo model")
+        self.silo_model.predict(np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8))
+        print("[Complete]: preload silo model")
+    
+    def detecting(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+        print("[DetectObj.detecting]: start")
         while True:
             try:
-                ret, frame, _ = cap.read()
-                if not ret:
-                    frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                q_frames.put(frame)
-            except KeyboardInterrupt:
-                break
-          
-    # 画像(depthも)を取得してキューに入れる
-    def capturing_with_depth(self, q_frames, cap):
-        while True:
-            try:
-                ret, color, depth = cap.read()
-                if not ret:
-                    color = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                    depth = np.zeros((FRAME_HEIGHT, FRAME_WIDTH),dtype=np.uint8)
-                q_frames.put((color, depth))
-            except KeyboardInterrupt:
-                break
-                
-    # 前方カメラでライン検出，ボール検出（閾値によるマスキング）を行う
-    def detecting_front(self,ucam,lcam,rcam,q_ucam,q_lcam,q_rcam,q_out):
-        while True:
-            try:
-                ###ライン検出ここから###
-                # 奥行方向のラインがあるかどうか：bool
-                is_forward = False
-                # 右方向のラインがあるかどうか：bool
-                is_right = False
-                # 左方向のラインがあるかどうか：bool
-                is_left = False
-                # 奥行方向のラインの、水平方向のずれを出力(ロボットの中心から前方向300mmくらい)
-                error_forward_x = 0.0
-                # 奥行方向のラインの角度のずれ
-                error_forward_angle = 0.0
-                
-                # 下部カメラから画像を読み込む
-                lcam_frame = q_lcam.get()
-                
-                _, _, _, _, _, _, _, lower_bird_point = lcam.params
-                bird_frame = bird_perspective_transform(lcam_frame, lower_bird_point)
-                
-                # BGRのBを抽出
-                l_blue = bird_frame[:,:,0]
-                
-                # ライン検出
-                l_lines = self.fld.detect(l_blue)
+                self.ball_detect(ucam, lcam, q_out)
+                self.silo_detect(ucam, lcam, q_out)
+            except Exception as e:
+                print(f"{e}")
+    
+    def ball_detect(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+        # 上についているカメラ（近くのボールを見つける）やつ
+        lcam_frame, _ = lcam.read_image_buffer()
+        lcam_results = self.ball_model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
+        lcam_annotated_frame = lcam_results[0].plot()
+        lcam_names = lcam_results[0].names
+        lcam_classes = lcam_results[0].boxes.cls
+        lcam_boxes = lcam_results[0].boxes
+        lcam.save_image("red", lcam_frame, lcam_classes, lcam_boxes.xywhn)
 
-                # image for debug
-                l_all_lines = self.fld.drawSegments(lcam_frame,l_lines)
-                
-                # 上部カメラから画像を読み込む
-                ucam_frame = q_ucam.get()
-                
-                _, _, _, _, _, _, _, upper_bird_point = ucam.params
-                bird_frame = bird_perspective_transform(ucam_frame, upper_bird_point)
-                
-                # BGRのBを抽出
-                u_blue = bird_frame[:,:,0]
-                
-                # ライン検出
-                u_lines = self.fld.detect(u_blue)
+        # 下についているカメラ（遠くのボールを見つける）やつ
+        ucam_frame, _ = ucam.read_image_buffer()
+        ucam_results = self.ball_model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
+        ucam_annotated_frame = ucam_frame
+        ucam_annotated_frame = ucam_results[0].plot()
+        ucam_names = ucam_results[0].names
+        ucam_classes = ucam_results[0].boxes.cls
+        ucam_boxes = ucam_results[0].boxes
+        ucam.save_image("red", ucam_frame, ucam_classes, ucam_boxes.xywhn)
+        
+        boxes = lcam_results[0].boxes
+        
+        # (ターゲットの色のボールの数, 一番近いx, y, z, 取れるかどうか)のタプル形式
+        # まず上からのカメラで認識
+        ball_coordinates = find_closest_ball_coordinates(
+            target_ball_color="redball",
+            names=lcam_names,
+            classes=lcam_classes,
+            boxes=lcam_boxes,
+            camera_params=lcam.params
+        )
+        
+        # ボールを見つけられなかったら下のカメラ（遠くまで見れる方）でも確認する
+        if ball_coordinates[0] == 0:
+            
+            ball_coordinates = find_closest_ball_coordinates(
+                target_ball_color="redball",
+                names=ucam_names,
+                classes=ucam_classes,
+                boxes=ucam_boxes,
+                camera_params=ucam.params
+            )
+        
+        # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+        self.ball_camera_out = ball_coordinates
+        # print(ball_coordinates)
+        
+        # デバッグで使うカメラキャプチャ画像の出力用
+        show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
+        q_out.put((show_frame, OUTPUT_ID.BALL))
 
-                # image for debug
-                u_all_lines = self.fld.drawSegments(ucam_frame,u_lines)
-                
-                l_filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                u_filtered_frame = np.zeros((FRAME_HEIGHT, FRAME_WIDTH, 3),dtype=np.uint8)
-                        
-                if l_lines is not None:
-                    # 右線かどうかの判定
-                    (is_right) = detect_horizon_vertical(l_lines, LINE_TYPE.RIGHT,lcam.params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
-                    # 左線かどうかの判定
-                    (is_left) = detect_horizon_vertical(l_lines,LINE_TYPE.LEFT,lcam.params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
-                    # 縦線かどうかの判定
-                    (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(l_lines, LINE_TYPE.FORWARD, lcam.params, LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, l_filtered_frame)
-                    
-                # 縦線が無ければ
-                if not is_forward:
-                    if u_lines is not None:
-                        # 右線かどうかの判定
-                        (is_right) = detect_horizon_vertical(u_lines, LINE_TYPE.RIGHT,ucam.params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE, u_filtered_frame)
-                        # 左線かどうかの判定
-                        (is_left) = detect_horizon_vertical(u_lines,LINE_TYPE.LEFT,ucam.params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
-                        # 縦線かどうかの判定
-                        (is_forward,error_forward_x,error_forward_angle) = detect_horizon_vertical(u_lines, LINE_TYPE.FORWARD, ucam.params, UPPER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE,u_filtered_frame)
-                l_blue = cv2.cvtColor(l_blue,cv2.COLOR_GRAY2BGR)
-                l_line_show_frame = np.hstack((l_blue,l_filtered_frame))            
-                u_blue = cv2.cvtColor(u_blue,cv2.COLOR_GRAY2BGR)
-                u_line_show_frame = np.hstack((u_blue,u_filtered_frame))
-                show = np.vstack((u_line_show_frame,l_line_show_frame))
-                
-                output_data = (is_forward, is_right, is_left, error_forward_x, error_forward_angle)
-                
-                if self.show:
-                    q_out.put((show, OUTPUT_ID.LINE))
-                self.line_camera_out = output_data
-                
-                ###ライン検出ここまで###
-                
-                ###ボール検出ここから###
-                items = 0
-                paddy_rice_x = 0
-                paddy_rice_y = 0
-                paddy_rice_z = DETECTABLE_MAX_DIS
-                is_obtainable = False
-                
-                # gray
-                ucam_ball_gray = cv2.cvtColor(ucam_frame,cv2.COLOR_BGR2GRAY)
-                lcam_ball_gray = cv2.cvtColor(lcam_frame,cv2.COLOR_BGR2GRAY)
-                
-                # cannyでエッジ検出
-                ucam_canny = cv2.Canny(ucam_ball_gray,300,300)
-                lcam_canny = cv2.Canny(lcam_ball_gray,300,300)
-                
-                # 膨張
-                ucam_dilate = cv2.dilate(ucam_canny,cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
-                lcam_dilate = cv2.dilate(lcam_canny,cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
-                
-                # 画像のタイプを揃える
-                ucam_dilate = cv2.cvtColor(ucam_dilate,cv2.COLOR_GRAY2BGR)
-                lcam_dilate = cv2.cvtColor(lcam_dilate,cv2.COLOR_GRAY2BGR)
-                # gradとframeの和を取る
-                ucam_combine = cv2.bitwise_or(ucam_frame,ucam_dilate)
-                lcam_combine = cv2.bitwise_or(lcam_frame,lcam_dilate)
-                
-                # blur
-                ucam_ball_blur = cv2.GaussianBlur(ucam_combine, ksize=(7,7),sigmaX=0)
-                lcam_ball_blur = cv2.GaussianBlur(lcam_combine, ksize=(7,7),sigmaX=0)
-                
-                # カメラ画像をHSVに変換
-                ucam_hsv = cv2.cvtColor(ucam_ball_blur, cv2.COLOR_BGR2HSV_FULL)
-                lcam_hsv = cv2.cvtColor(lcam_ball_blur, cv2.COLOR_BGR2HSV_FULL)
-                
-                # 閾値でmasking処理
-                ucam_mask = cv2.inRange(ucam_hsv,self.blue_lower_mask,self.blue_upper_mask)
-                lcam_mask = cv2.inRange(lcam_hsv,self.blue_lower_mask,self.blue_upper_mask)
-                
-                ucam_close = cv2.morphologyEx(ucam_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
-                lcam_close = cv2.morphologyEx(lcam_mask, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3)), iterations=3)
-                
-                # 下部カメラで円を検出する
-                circles = find_circle_contours(lcam_close,LOWER_MIN_CONTOUR_AREA_THRESHOLD,LOWER_CIRCULARITY_THRESHOLD)
-                # もし下部カメラで円が検出されたら
-                if len(circles) > 0:
-                    # デバッグ用に円を描画
-                    [cv2.circle(lcam_ball_blur,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
-                    # 返り値の更新
-                    items = len(circles)
-                    target = circles.index(max(circles, key=lambda x:x[1]))
-                    (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
-                    is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
-                # もし下部カメラで円が検出されなければ
-                else:
-                    # 上部カメラで円を検出する
-                    circles = find_circle_contours(ucam_close,UPPER_MIN_CONTOUR_AREA_THRESHOLD,UPPER_CIRCULARITY_THRESHOLD)
-                    
-                    # 上部カメラはカメラ画像の下半分だけ見る
-                    circles = [[(c[0][0],c[0][1]), c[1]] for c in circles if c[0][1] > FRAME_HEIGHT/2]
-                    
-                    # もし上部カメラで円が検出されたら
-                    if len(circles) > 0:
-                        # デバッグ用に円を描画
-                        [cv2.circle(ucam_ball_blur,(int(c[0][0]),int(c[0][1])),int(c[1]),(0,255,0),2) for c in circles]
-                        # 返り値の更新
-                        items = len(circles)
-                        target = circles.index(max(circles, key=lambda x:x[1]))
-                        (paddy_rice_x,_,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int(circles[target][0][0]),int(circles[target][0][1]),calc_distance(circles[target][1],PADDY_RICE_RADIUS))
-                        paddy_rice_y = UPPER_STATIC_Y
-                        is_obtainable = False
-                        
-                # 画像のタイプを揃える
-                ucam_canny = cv2.cvtColor(ucam_canny,cv2.COLOR_GRAY2BGR)
-                lcam_canny = cv2.cvtColor(lcam_canny,cv2.COLOR_GRAY2BGR)
-                
-                #ucam_combine = cv2.cvtColor(ucam_combine,cv2.COLOR_GRAY2BGR)
-                #lcam_combine = cv2.cvtColor(lcam_combine,cv2.COLOR_GRAY2BGR)
-                ucam_close = cv2.cvtColor(ucam_close,cv2.COLOR_GRAY2BGR)
-                lcam_close = cv2.cvtColor(lcam_close,cv2.COLOR_GRAY2BGR)
-                u_ball_show_frame = np.hstack((ucam_ball_blur,ucam_close))
-                l_ball_show_frame = np.hstack((lcam_ball_blur,lcam_close))
-                
-                # (xは水平，yは奥行方向)
-                output_data = (items, paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
-                if self.show:
-                    show = np.vstack((u_ball_show_frame,l_ball_show_frame))
-                    q_out.put((show, OUTPUT_ID.BALL))
-                #if self.save_movie:
-                    #lcam.write(np.vstack((l_line_show_frame,l_ball_show_frame)))
-                    #ucam.write(np.vstack((u_line_show_frame,u_ball_show_frame)))
-                
-                self.ball_camera_out = output_data
-                ###ボール検出ここまで###
-            except KeyboardInterrupt:
-                break
+        
+    def silo_detect(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue, my_team_color="redball", opponent_team_color="blueball"):
+        # サイロの画像を取得する
+        frame, _ = ucam.read_image_buffer()
+        results = self.silo_model.predict(frame, imgsz=320, conf=0.5, verbose=False)
+        annotated_frame = results[0].plot()
+        names = results[0].names
+        classes = results[0].boxes.cls
+        boxes = results[0].boxes
+        ucam.save_image("silo", frame, classes, boxes.xywhn)
+        
+        # サイロの座標（(x1, y1), (x2, y2)）を取得する（TODO: x?座標でソート）
+        silo_boxes: list[Boxes] = [
+            box for box, cl in zip(boxes, classes) if names[int(cl)] == "silo"
+        ]
+        # サイロのインスタンスを一つずつ立てる
+        silo_lists: typing.List[Silo] = []
+        for silo_box in silo_boxes:
+            x1, y1, x2, y2 = silo_box.xyxy[0]
+            silo_lists.append(
+                Silo(x1=x1, y1=y1, x2=x2, y2=y2)
+            )
+        
+        # 自分のチームのボールの座標 ((x1, y1), (x2, y2))を取得する
+        my_team_ball_box_in_silo = [
+            box for box, cl in zip(boxes, classes) if names[int(cl)] == my_team_color
+        ]
+        # サイロの状態を更新
+        for my_ball_box in my_team_ball_box_in_silo:
+            for silo in silo_lists:
+                x1, y1, x2, y2 = my_ball_box.xyxy[0]
+                silo.is_ball_in(ball_x = (x1 + x2)/2, ball_y = (y1 + y2)/2, is_my_team_ball = True)
+        
+        # 相手チームのボールの座標 ((x1, y1), (x2, y2))を取得する
+        opponent_team_in_silo = [
+            box for box, cl in zip(boxes, classes) if names[int(cl)] == opponent_team_color
+        ]
+        # サイロの状態を更新
+        for opponent_ball_box in opponent_team_in_silo:
+            for silo in silo_lists:
+                x1, y1, x2, y2 = opponent_ball_box.xyxy[0]
+                silo.is_ball_in(ball_x = (x1 + x2)/2, ball_y = (y1 + y2)/2, is_my_team_ball = False)
+        
+        # print("#"*100)
+        # for silo in silo_lists:
+        #     print(silo)
+        # print("#"*100)
+            
+        # TODO: 出力をいい感じにする
+
+        #サイロの座標を更新
+        for silo in silo_lists:
+            silo.update_position(ucam.params)
+        
+        ucam.save_image("anotated_silo", annotated_frame)
+        
+        q_out.put((frame, OUTPUT_ID.SILO))
+        self.silo_camera_out = silo_lists
+
+        # TODO: 消す
+        # time.sleep(1)
+        
             
     # 後方カメラでサイロを監視
-    def detecting_rear(self,ucam,lcam,rcam,q_ucam,q_lcam,q_rcam,q_out):
-        while True:
-            try:
-                frame = q_rcam.get()
-                results = self.model.predict(frame, imgsz=320, conf=0.5, verbose=False)
-                annotated_frame = results[0].plot()
-                names = results[0].names
-                classes = results[0].boxes.cls
-                boxes = results[0].boxes
-                x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
-                maximum_my_ball_in_silo_count = 0
-                target_silo_x=0
-                target_silo_y=0
-                target_silo_z=0
+    def silo_detect_temp(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+        frame, _ = ucam.read_image_buffer()
+        results = self.silo_model.predict(frame, imgsz=320, conf=0.5, verbose=False)
+        annotated_frame = results[0].plot()
+        names = results[0].names
+        classes = results[0].boxes.cls
+        boxes = results[0].boxes
+        x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
+        ucam.save_image("silo", frame, classes, boxes.xywhn)
+        maximum_my_ball_in_silo_count = 0
+        target_silo_x=0
+        target_silo_y=0
+        target_silo_z=0
+
+        # ballのx1,y1,x2,y2を入れる
+        ball_xyz = np.empty((0,4), int)
         
-                # ballのx1,y1,x2,y2を入れる
-                ball_xyz = np.empty((0,4), int)
+        for box, cls in zip(boxes, classes):
+            name = names[int(cls)]
+            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+            if(name == "blueball"):
+                try:
+                    ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2]],axis=0)
+                except Exception as err:
+                    print(f"This is inference_for_silo function in DetectObj class\nUnexpected {err=}, {type(err)=}")
+        
+        for box, cls in zip(boxes, classes):
+            name = names[int(cls)]
+            x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+            my_ball_in_silo_counter = 0
+            if(name == "silo"):
+                for bxyz in ball_xyz:
+                    if(x1<bxyz[0] and bxyz[2]<x2 and bxyz[3]<y2 and abs((x2-x1)-(bxyz[2]-bxyz[0]))<BALL_IN_SILO_THRESHOLD):
+                        my_ball_in_silo_counter += 1
+                cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
+            
+            if maximum_my_ball_in_silo_count < my_ball_in_silo_counter:
+                w = (x1+x2)/2
+                h = (y1+y2)/2
+                dis = calc_distance(abs(y1-y2),SILO_HEIGHT)
+                (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(ucam.params,w,h,dis)
+                maximum_my_ball_in_silo_count = my_ball_in_silo_counter
+        
+        output_data = (target_silo_x,target_silo_y,target_silo_z)
+        q_out.put((annotated_frame, OUTPUT_ID.SILO))
+        #if self.save_movie:
+            #rcam.write(annotated_frame)
+        self.silo_camera_out = output_data
                 
-                for box, cls in zip(boxes, classes):
-                    name = names[int(cls)]
-                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    if(name == "blueball"):
-                        try:
-                            ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2]],axis=0)
-                        except Exception as err:
-                            print(f"This is inference_for_silo function in DetectObj class\nUnexpected {err=}, {type(err)=}")
+    # def detecting_ball(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+    #     while True:
+    #         try:
+    #             paddy_rice_x = 0
+    #             paddy_rice_y = 0
+    #             paddy_rice_z = DETECTABLE_MAX_DIS
+    #             is_obtainable = False
                 
-                for box, cls in zip(boxes, classes):
-                    name = names[int(cls)]
-                    x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
-                    my_ball_in_silo_counter = 0
-                    if(name == "silo"):
-                        for bxyz in ball_xyz:
-                            if(x1<bxyz[0] and bxyz[2]<x2 and bxyz[3]<y2 and abs((x2-x1)-(bxyz[2]-bxyz[0]))<BALL_IN_SILO_THRESHOLD):
-                                my_ball_in_silo_counter += 1
-                        cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
+    #             # lcam_frame = q_lcam.get()
+    #             lcam_frame, _ = lcam.read_image_buffer()
+    #             lcam_results = self.ball_model.predict(lcam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name 
+    #             lcam_annotated_frame = lcam_results[0].plot()
+    #             names = lcam_results[0].names
+    #             classes = lcam_results[0].boxes.cls
+    #             boxes = lcam_results[0].boxes
+                
+    #             ucam_frame, _ = ucam.read_image_buffer()
+    #             ucam_results = self.ball_model.predict(ucam_frame, imgsz=320, conf=0.5, verbose=False) # TODO: rename model name
+    #             ucam_annotated_frame = ucam_frame
+    #             ucam_annotated_frame = ucam_results[0].plot()
+                
+    #             # もし、下部カメラで検出できていれば
+    #             if classes.dim() > 0:
+    #                 for box, cls in zip(boxes, classes):
+    #                     name = names[int(cls)]
+    #                     if name == "blueball" :
+    #                         x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+    #                         # 長方形の長辺を籾の半径とする
+    #                         r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+    #                         z = calc_distance(r, PADDY_RICE_RADIUS)
+    #                         # 籾が複数ある場合は最も近いものの座標を返す
+    #                         if z < paddy_rice_z:
+    #                             (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(lcam.params,int((x1+x2)/2),int((y1+y2)/2),z)
+    #                 is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                     
-                    if maximum_my_ball_in_silo_count < my_ball_in_silo_counter:
-                        w = (x1+x2)/2
-                        h = (y1+y2)/2
-                        dis = calc_distance(abs(y1-y2),SILO_HEIGHT)
-                        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(rcam.params,w,h,dis)
-                        maximum_my_ball_in_silo_count = my_ball_in_silo_counter
+    #             else:
+    #                 pass
+    #                 names = ucam_results[0].names
+    #                 classes = ucam_results[0].boxes.cls
+    #                 boxes = ucam_results[0].boxes
+    #                 for box, cls in zip(boxes, classes):
+    #                     name = names[int(cls)]
+    #                     if(name == "blueball"):
+    #                         x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+    #                         # 長方形の長辺を籾の半径とする
+    #                         r = max(abs(x1-x2)/2, abs(y1-y2)/2)
+    #                         z = calc_distance(r, PADDY_RICE_RADIUS)
+    #                         # 籾が複数ある場合は最も近いものの座標を返す
+    #                         if z < paddy_rice_z:
+    #                             (paddy_rice_x,paddy_rice_y,paddy_rice_z) = image_to_robot_coordinate_transformation(ucam.params,int((x1+x2)/2),int((y1+y2)/2),z)
+    #                 is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
                 
-                output_data = (target_silo_x,target_silo_y,target_silo_z)
-                if self.show:
-                    q_out.put((annotated_frame, OUTPUT_ID.SILO))
-                #if self.save_movie:
-                    #rcam.write(annotated_frame)
-                self.silo_camera_out = output_data
-            except KeyboardInterrupt:
-                break
+    #             show_frame = np.hstack((ucam_annotated_frame,lcam_annotated_frame))
+    #             # 検出したボールの座標をキューに送信 (xは水平，yは奥行方向)
+    #             output_data = (len(boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
+    #             q_out.put((show_frame, OUTPUT_ID.BALL))
+    #             self.ball_camera_out = output_data
+            
+    #         except KeyboardInterrupt:
+    #             break
+            
+    # # 後方カメラでサイロを監視
+    # def detecting_silo(self, ucam: RealsenseObject, lcam: RealsenseObject, q_out: Queue):
+    #     while True:
+    #         try:
+    #             frame, _ = ucam.read_image_buffer()
+    #             results = self.silo_model.predict(frame, imgsz=320, conf=0.5, verbose=False)
+    #             annotated_frame = results[0].plot()
+    #             names = results[0].names
+    #             classes = results[0].boxes.cls
+    #             boxes = results[0].boxes
+    #             x1, y1, x2, y2 = [0, 0, FRAME_WIDTH, FRAME_HEIGHT]
+    #             maximum_my_ball_in_silo_count = 0
+    #             target_silo_x=0
+    #             target_silo_y=0
+    #             target_silo_z=0
+        
+    #             # ballのx1,y1,x2,y2を入れる
+    #             ball_xyz = np.empty((0,4), int)
+                
+    #             for box, cls in zip(boxes, classes):
+    #                 name = names[int(cls)]
+    #                 x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+    #                 if(name == "blueball"):
+    #                     try:
+    #                         ball_xyz = np.append(ball_xyz, [[x1,y1,x2,y2]],axis=0)
+    #                     except Exception as err:
+    #                         print(f"This is inference_for_silo function in DetectObj class\nUnexpected {err=}, {type(err)=}")
+                
+    #             for box, cls in zip(boxes, classes):
+    #                 name = names[int(cls)]
+    #                 x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
+    #                 my_ball_in_silo_counter = 0
+    #                 if(name == "silo"):
+    #                     for bxyz in ball_xyz:
+    #                         if(x1<bxyz[0] and bxyz[2]<x2 and bxyz[3]<y2 and abs((x2-x1)-(bxyz[2]-bxyz[0]))<BALL_IN_SILO_THRESHOLD):
+    #                             my_ball_in_silo_counter += 1
+    #                     cv2.putText(annotated_frame,f"{my_ball_in_silo_counter} in silo",(x1,y1+15),cv2.FONT_HERSHEY_PLAIN,1.0,(0,255,0),thickness=2)
+                    
+    #                 if maximum_my_ball_in_silo_count < my_ball_in_silo_counter:
+    #                     w = (x1+x2)/2
+    #                     h = (y1+y2)/2
+    #                     dis = calc_distance(abs(y1-y2),SILO_HEIGHT)
+    #                     (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(ucam.params,w,h,dis)
+    #                     maximum_my_ball_in_silo_count = my_ball_in_silo_counter
+                
+    #             output_data = (target_silo_x,target_silo_y,target_silo_z)
+    #             q_out.put((annotated_frame, OUTPUT_ID.SILO))
+    #             #if self.save_movie:
+    #                 #rcam.write(annotated_frame)
+    #             self.silo_camera_out = output_data
+    #         except KeyboardInterrupt:
+    #             break

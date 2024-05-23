@@ -2,3 +2,5 @@ __pycache__/
 .trashcan/
 camlogs/
 laptop_example.py
+image_log
+*.swp
