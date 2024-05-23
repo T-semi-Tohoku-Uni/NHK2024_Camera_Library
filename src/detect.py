@@ -8,6 +8,7 @@ from enum import Enum
 from queue import Queue
 from .camera import RealsenseObject
 from torch import Tensor
+import torch
 import typing
 import time
 
@@ -55,7 +56,7 @@ LOWER_CIRCULARITY_THRESHOLD=0.2
 # ロボット座標におけるアームのファンで吸い込めるエリアの中心と半径[mm]
 OBTAINABE_AREA_CENTER_X = 0
 OBTAINABE_AREA_CENTER_Y = 760
-OBTAINABE_AREA_RADIUS = 50
+OBTAINABE_AREA_RADIUS = 80
 
 # カメラからラインの検出点までの距離[mm]
 LOWER_LINE_DETECTION_POINT_TO_CAMERA_DISTANCE = 990
@@ -170,13 +171,26 @@ def image_to_robot_coordinate_transformation(params,w, h, dis):
     
     """
     (focal_length,pos_x,pos_y,pos_z,theta_x,theta_y,theta_z,_) = params
-    internal_param_inv = np.array([[1/focal_length, 0, 0], [0,1/focal_length, 0], [0, 0, 1] ,[0, 0, 1/dis]])
-    external_param = np.array([[np.cos(theta_z)*np.cos(theta_y), np.cos(theta_z)*np.sin(theta_y)*np.sin(theta_x)-np.sin(theta_z)*np.cos(theta_x), np.cos(theta_z)*np.sin(theta_y)*np.cos(theta_x)+np.sin(theta_z)*np.sin(theta_x), pos_x],
-                        [np.sin(theta_z)*np.cos(theta_y), np.sin(theta_z)*np.sin(theta_y)*np.sin(theta_x)+np.cos(theta_z)*np.cos(theta_x), np.sin(theta_z)*np.sin(theta_y)*np.cos(theta_x)-np.cos(theta_z)*np.sin(theta_x), pos_y],
-                        [-np.sin(theta_y), np.cos(theta_y)*np.sin(theta_x), np.cos(theta_y)*np.cos(theta_x), pos_z],
-                        [0, 0, 0, 1]])
+    
+    focal_length = torch.tensor(focal_length)
+    pos_x = torch.tensor(pos_x)
+    pos_y = torch.tensor(pos_y)
+    pos_z = torch.tensor(pos_z)
+    theta_x = torch.tensor(theta_x)
+    theta_y = torch.tensor(theta_y)
+    theta_z = torch.tensor(theta_z)
+    
+    internal_param_inv = torch.tensor([[1/focal_length, 0, 0], [0,1/focal_length, 0], [0, 0, 1] ,[0, 0, 1/dis]])
+    external_param = torch.tensor(
+        [
+            [torch.cos(theta_z)*torch.cos(theta_y), torch.cos(theta_z)*torch.sin(theta_y)*torch.sin(theta_x)-torch.sin(theta_z)*torch.cos(theta_x), torch.cos(theta_z)*torch.sin(theta_y)*torch.cos(theta_x)+torch.sin(theta_z)*torch.sin(theta_x), pos_x],
+            [torch.sin(theta_z)*torch.cos(theta_y), torch.sin(theta_z)*torch.sin(theta_y)*torch.sin(theta_x)+torch.cos(theta_z)*torch.cos(theta_x), torch.sin(theta_z)*torch.sin(theta_y)*torch.cos(theta_x)-torch.cos(theta_z)*torch.sin(theta_x), pos_y],
+            [-torch.sin(theta_y), torch.cos(theta_y)*torch.sin(theta_x), torch.cos(theta_y)*torch.cos(theta_x), pos_z],
+            [0, 0, 0, 1]
+        ]
+    )
     # Opencvの座標でいう(FRAME_WIDTH/2, FRAME_HEIGHT/2)が(0,0)になるよう平行移動
-    Target = np.array([[(w-FRAME_WIDTH/2)*dis], [(-h+FRAME_HEIGHT/2)*dis], [dis]])
+    Target = torch.tensor([[(w-FRAME_WIDTH/2)*dis], [(-h+FRAME_HEIGHT/2)*dis], [dis]])
     
     coordinate = external_param @ internal_param_inv @ Target 
     
@@ -426,6 +440,7 @@ def find_closest_ball_coordinates(
     if not target_boxes:
         return None
     
+    # 前回認識したボール座標に近いものを一番近いボールと認識する
     for box in target_boxes:
         x1, y1, x2, y2 = [int(i) for i in box.xyxy[0]]
         
@@ -440,6 +455,15 @@ def find_closest_ball_coordinates(
     is_obtainable = (paddy_rice_x-OBTAINABE_AREA_CENTER_X)**2 + (paddy_rice_y-OBTAINABE_AREA_CENTER_Y)**2 < OBTAINABE_AREA_RADIUS**2
     return (len(target_boxes), paddy_rice_x, paddy_rice_y, paddy_rice_z, is_obtainable)
 
+# 遠くまで見るカメラ
+def ucam_ball_detect_algorithm(x1, y1, x2, y2, last_x=None, last_y=None):
+    
+    pass
+
+# 近くだけ見るカメラ
+def lcam_ball_detect_algorithm(x1, y1, x2, y2, last_x=None, last_y=None):
+    pass
+
 class Silo:
     def __init__(self, x1, y1, x2, y2):
         # 自分のサイロの座標
@@ -447,11 +471,10 @@ class Silo:
         self.y1 = y1
         self.x2 = x2
         self.y2 = y2
-
         # それぞれの入っているボールの数
         self.__my_team_ball_cnt = 0
         self.__opponent_team_cnt = 0
-        
+        self.pos = (0, 400, 0)
         # TODO: 下から順にボールが入っているリスト
     
     def is_ball_in(self, ball_x, ball_y, is_my_team_ball):
@@ -459,7 +482,7 @@ class Silo:
         min_y, max_y = min(self.y1, self.y2), max(self.y1, self.y2)
 
         inside_points = []
-        if min_x < ball_x and ball_x < max_x and min_y < ball_y and ball_y < max_y:
+        if min_x < ball_x and ball_x < max_x:
             inside_points.append((ball_x, ball_y))
 
             if is_my_team_ball:
@@ -473,8 +496,13 @@ class Silo:
     def get_opponent_team_cnt(self):
         return self.__opponent_team_cnt
     
-    def get_position(self):
-        return (self.x1+self.x2)/2, (self.y1+self.y2)/2
+    def update_position(self, params):
+        w = (self.x1+self.x2)/2
+        h = (self.y1+self.y2)/2
+        dis = calc_distance(abs(self.y1-self.y2),SILO_HEIGHT)
+        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(params,w,h,dis)
+        self.pos = (target_silo_x,target_silo_y,target_silo_z)
+        return self.pos
      
     def __str__(self):
         return f"Box(({self.__my_team_ball_cnt}, {self.__opponent_team_cnt})"  
@@ -491,6 +519,10 @@ class DetectObj:
         self.ball_camera_out = (0,0.0,0.0,DETECTABLE_MAX_DIS,False)
         self.silo_camera_out = []
         self.line_camera_out = (False,False,False,0.0,0.0)
+        
+        # 前のフレームで取得したボールのカメラ座標. 何も認識していなかったらNone. あればその座標が入っている
+        self.__last_ball_camera_x = None
+        self.__last_ball_camera_y = None
         
         # TODO
         # 画像表示するかどうか（q_outに画像とidを入れる
@@ -578,6 +610,7 @@ class DetectObj:
         names = results[0].names
         classes = results[0].boxes.cls
         boxes = results[0].boxes
+        ucam.save_image("silo", frame, classes, boxes.xywhn)
         
         # サイロの座標（(x1, y1), (x2, y2)）を取得する（TODO: x?座標でソート）
         silo_boxes: list[Boxes] = [
@@ -617,6 +650,12 @@ class DetectObj:
         # print("#"*100)
             
         # TODO: 出力をいい感じにする
+
+        #サイロの座標を更新
+        for silo in silo_lists:
+            silo.update_position(ucam.params)
+        
+        ucam.save_image("anotated_silo", annotated_frame)
         
         q_out.put((frame, OUTPUT_ID.SILO))
         self.silo_camera_out = silo_lists

@@ -24,7 +24,7 @@ if __name__ == "__main__":
     while True:
         try:
             # if mainprocess.detector.show:   
-            frame, id = mainprocess.q_out.get() 
+            frame, id = mainprocess.q_out.get()
             cv2.imshow(f'{id}', frame)
             key = cv2.waitKey(1)
             if key == ord("q"):
