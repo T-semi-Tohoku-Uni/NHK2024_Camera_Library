@@ -1,6 +1,7 @@
 import numpy as np
 import cv2
 from src.capture_and_detect import MainProcess
+from hardware_module import Field
 
 if __name__ == "__main__":
     # model_path = 'models/20240109best.pt'
@@ -11,8 +12,7 @@ if __name__ == "__main__":
     # メインプロセスを実行するクラス
     print("create main instance")
     mainprocess = MainProcess(
-        ball_model_path=red_model_path, 
-        silo_model_path=silo_model_path,
+        field=Field.BLUE,
         show=True
     )
     
@@ -25,11 +25,12 @@ if __name__ == "__main__":
         try:
             # if mainprocess.detector.show:   
             frame, id = mainprocess.q_out.get()
-            cv2.imshow(f'{id}', frame)
+            # cv2.imshow(f'{id}', frame)
             key = cv2.waitKey(1)
             if key == ord("q"):
                 break
-            
+            items,x,y,z,is_obtainable = mainprocess.update_ball_camera_out()
+            print(f"\n{items=}, {x=}, {y=}, {z=}, {is_obtainable=}")
             # _, _= mainprocess.q_out.get()
             continue
             

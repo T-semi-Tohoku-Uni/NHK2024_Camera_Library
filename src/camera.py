@@ -7,7 +7,7 @@ import time
 import datetime
 from multiprocessing import RawArray, Lock, Process
 import ctypes
-from typing import Tuple
+from typing import Tuple, Dict
 import sys
 from threading import Thread
 import os
@@ -92,7 +92,7 @@ class RealsenseObject:
             theta_x,
             theta_y,
             theta_z,
-            saved_image_dir=None,
+            saved_image_dir,
         ):
         try:
             self.__serial_number = serial_number
@@ -153,6 +153,20 @@ class RealsenseObject:
         # self.capture_thread = Thread(target=self.capture, daemon=True)
         self.saved_dir = saved_image_dir
         
+        self.video = {}
+        
+        
+    def init_video(
+        self,
+        video_name: str
+    ):
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 'mp4v'コーデックを使用
+        
+        if not os.path.exists(os.path.join(self.saved_dir, self.__serial_number)):
+            os.makedirs(os.path.join(self.saved_dir, self.__serial_number))
+            
+        self.video[video_name] = cv2.VideoWriter(os.path.join(self.saved_dir, self.__serial_number, f"{video_name}.mp4"), fourcc, 10, (FRAME_WIDTH, FRAME_HEIGHT))
+    
     # カメラのキャプチャー, 別のプロセスで動かす
     def capture(self):
         try:
@@ -215,10 +229,18 @@ class RealsenseObject:
         with open(os.path.join(saved_bounding_box_dir, f"{str(timestamp)}.txt"), mode="w") as f:
             for index, cls in enumerate(classes):
                 f.write(f"{int(cls)} {(xywhn[index][0])} {xywhn[index][1]} {xywhn[index][2]} {xywhn[index][3]}\n")
-        
+    
+    def add_video(
+        self,
+        video_name,
+        frame: np.ndarray
+    ):
+        self.video[video_name].write(frame)
     
     def release(self):
         self.pipeline.stop()
+        for v in self.video.values():
+            v.release()
         # self.output_file.release()
         print(f"{self.__serial_number} : {self.counter/(time.time()-self.start_time)}fps")
         print("Closed Realsense Device")

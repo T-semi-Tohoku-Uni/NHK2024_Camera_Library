@@ -9,12 +9,13 @@ from typing import Callable
 import numpy as np
 import torch
 import os
+from hardware_module import Field
 
 class MainProcess:
     def __init__(
             self,
-            ball_model_path,
-            silo_model_path,
+            field: Field = None,
+            save_image_dir = None,
             show=False, 
             save_movie=False,
         ):
@@ -31,16 +32,38 @@ class MainProcess:
         # # CUDAの設定を調整
         # os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 使用するGPUを指定（0番目のGPU）
         # torch.cuda.set_per_process_memory_fraction(max_usage, 0)
-
         
+        red_model_path = '/home/tsemi/NHK2024/NHK2024_R2_Raspi/src/NHK2024_Camera_Library/models/NHK2024_red_ball_model/red_ball_model.pt'
+        blue_model_path = '/home/tsemi/NHK2024/NHK2024_R2_Raspi/src/NHK2024_Camera_Library/models/NHK2024_blue_ball_model/blue_ball_model.pt'
+        silo_model_path = '/home/tsemi/NHK2024/NHK2024_R2_Raspi/src/NHK2024_Camera_Library/models/NHK2024_silo_model/silo_model.pt'
+        
+        
+        self.field = field
         # Create YOLO model
-        ball_model = YOLO(ball_model_path).to(device)
-        silo_model = YOLO(silo_model_path).to(device)
-        # Create Detect Object
-        self.detector = DetectObj(
+        if field == Field.BLUE:
+            ball_model = YOLO(blue_model_path).to(device)
+            silo_model = YOLO(silo_model_path).to(device)
+            
+            self.detector = DetectObj(
             ball_model=ball_model, 
             silo_model=silo_model
-       )
+            )
+        else:
+            ball_model = YOLO(red_model_path).to(device)
+            silo_model = YOLO(silo_model_path).to(device)
+            
+            self.detector = DetectObj(
+            ball_model=ball_model, 
+            silo_model=silo_model
+            )
+             
+    #     ball_model = YOLO(ball_model_path).to(device)
+    #     silo_model = YOLO(silo_model_path).to(device)
+    #     # Create Detect Object
+    #     self.detector = DetectObj(
+    #         ball_model=ball_model, 
+    #         silo_model=silo_model
+    #    )
         
         # self.ucam = UpperCamera(f"{timestamp}")
         # self.ucam = RealsenseObject(
@@ -65,8 +88,10 @@ class MainProcess:
             theta_x = 10*np.pi/180,
             theta_y = 0,
             theta_z = 0,
-            saved_image_dir="image_log/"
+            saved_image_dir=save_image_dir
         )
+        self.ucam.init_video("ball")
+        self.ucam.init_video("silo")
         # self.lcam = LowerCamera(f"{timestamp}")
         # 上についてるカメラ（ボール認識のみに使用）
         self.lcam = RealsenseObject(
@@ -79,8 +104,10 @@ class MainProcess:
             theta_x = 35*np.pi/180,
             theta_y = 0,
             theta_z = 0,
-            saved_image_dir="image_log/"
+            saved_image_dir=save_image_dir
         )
+        self.lcam.init_video("ball")
+        self.lcam.init_video("silo")
 
         self.thread_upper_capture = threading.Thread()
         self.thread_lower_capture = threading.Thread()
@@ -123,12 +150,18 @@ class MainProcess:
         #     daemon=True
         # )
         
+        if self.field == Field.BLUE:
+            my_team_color = "blueball"
+        else:
+            my_team_color = "redball"
+            
         self.thread_detector = threading.Thread(
             target=self.detector.detecting,
             args=(
                 self.ucam,
                 self.lcam,
-                self.q_out
+                self.q_out,
+                my_team_color,
             ),
             daemon=True
         ).start()
