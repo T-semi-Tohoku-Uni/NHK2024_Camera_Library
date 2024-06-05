@@ -497,6 +497,7 @@ class Silo:
         # それぞれの入っているボールの数
         self.__my_team_ball_cnt = 0
         self.__opponent_team_cnt = 0
+        
         self.pos = (0, 400, 0)
         # TODO: 下から順にボールが入っているリスト
     
@@ -519,6 +520,13 @@ class Silo:
     def get_opponent_team_cnt(self):
         return self.__opponent_team_cnt
     
+    def cac_absolute_coordinates(self, param):
+        w = (self.x1+self.x2)/2
+        h = (self.y1+self.y2)/2
+        dis = calc_distance(abs(self.y1-self.y2),SILO_HEIGHT)
+        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(params,w,h,dis)
+        return (target_silo_x,target_silo_y,target_silo_z)
+    
     def update_position(self, params):
         w = (self.x1+self.x2)/2
         h = (self.y1+self.y2)/2
@@ -526,9 +534,64 @@ class Silo:
         (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(params,w,h,dis)
         self.pos = (target_silo_x,target_silo_y,target_silo_z)
         return self.pos
+    
+    def get_score(self) -> None:
+        my_ball_num = self.get_my_team_ball_cnt()
+        opponent_ball_num = self.get_opponent_team_cnt()
+        
+        # ロボットからサイロまでの距離を出す
+        diff_from_robot = np.sqrt(self.pos[0]*self.pos[0] + self.pos[1]*self.pos[1])/100
+        
+        # 計3個　-1000点
+        # 相手2　3000点
+        # 相手1　自分1　5000点
+        # 自分2　4000点
+        # 相手1　0
+        # 自分1　1000
+        # 0個　2000
+        
+        score = 0
+        
+        if (my_ball_num + opponent_ball_num) == 0:
+            score = 30000
+        elif my_ball_num == 1 and opponent_ball_num == 0:
+            score = 20000
+        elif my_ball_num == 0 and opponent_ball_num == 1:
+            score = 10000
+        elif my_ball_num == 2 and opponent_ball_num == 0:
+            score = 50000
+        elif my_ball_num == 1 and opponent_ball_num == 1:
+            score = 60000
+        elif my_ball_num == 0 and opponent_ball_num == 2:
+            score = 40000
+        elif (my_ball_num + opponent_ball_num) == 3:
+            score = 0
+        else:
+            print('error')
+            
+        if score != 0:
+            score -= diff_from_robot
+
+        return score
      
     def __str__(self):
         return f"Box(({self.__my_team_ball_cnt}, {self.__opponent_team_cnt})"  
+        
+# サイロのターゲットを決定
+def decide_silo(silo_lists: typing.List[Silo]) -> Silo:
+    scores = []
+    for s in silo_lists:
+        score = s.get_score()
+        if score == 0: # サイロがいっぱいのやつは捨てる
+            continue
+        scores.append(s.get_score())
+
+    # 見えてるサイロが全部いっぱいならNoneを返す
+    if len(scores) == 0:
+        return None
+    
+    reverse_list = [x for _, x in sorted(zip(scores, silo_lists), key=lambda pair: pair[0], reverse=True)]
+    return reverse_list[0]
         
 class DetectObj:
     def __init__(self, ball_model: YOLO, silo_model: YOLO):
@@ -546,6 +609,14 @@ class DetectObj:
         # 前のフレームで取得したボールのカメラ座標. 何も認識していなかったらNone. あればその座標が入っている
         self.__last_ball_camera_x = None
         self.__last_ball_camera_y = None
+        
+        # 入れるサイロを決定した状態. 
+        # まだ決定してない場合はNoneを返す.
+        self.__last_silo_camera_x = None
+        self.__last_silo_camera_y = None
+        
+        # 最後に認識したサイロのフレーム数（何フレーム前）
+        self.__last_silo_detect_frame = 0
         
         # TODO
         # 画像表示するかどうか（q_outに画像とidを入れる
@@ -650,6 +721,7 @@ class DetectObj:
         classes = results[0].boxes.cls
         boxes = results[0].boxes
         ucam.save_image("silo", frame, classes, boxes.xywhn)
+        ucam.save_image("anotated_silo", annotated_frame, classes, boxes.xywhn)
         ucam.add_video("silo", annotated_frame)
         
         
@@ -661,6 +733,12 @@ class DetectObj:
         silo_lists: typing.List[Silo] = []
         for silo_box in silo_boxes:
             x1, y1, x2, y2 = silo_box.xyxy[0]
+            # w1, h1, w2, h2 = silo_box.xywhn[0]
+            
+            # # 見つけたサイロが3個より少なかったら、両サイド10%に入っているやつは削除する
+            # if len(silo_boxes) < 3 and (w2 < 0.1 or w1 > 0.9):
+            #     continue
+            
             silo_lists.append(
                 Silo(x1=x1, y1=y1, x2=x2, y2=y2)
             )
@@ -692,12 +770,83 @@ class DetectObj:
             
         # TODO: 出力をいい感じにする
 
-        #サイロの座標を更新
+        #サイロの座標を更新 (ロボット座標へ)
         for silo in silo_lists:
             silo.update_position(ucam.params)
         
+        # サイロを決定している場合
+        if (self.__last_silo_camera_x is not None) and (self.__last_silo_camera_y is not None):
+            print("already decide")
+            target_silo: Silo = None
+            last_diff = float('inf')
+            # 前認識したサイロと一番近いサイロを見つける
+            for silo in silo_lists:
+                # TODO: 三つ埋まっていたらパス
+                if silo.get_my_team_ball_cnt() + silo.get_opponent_team_cnt() == 3:
+                    continue
+                
+                x, y, _ = silo.pos
+                diff = np.sqrt((self.__last_silo_camera_x - x)**2 + (self.__last_silo_camera_y - y)**2)
+                if last_diff > diff:
+                    target_silo = silo
+                    last_diff = diff
+            
+            print(f"{len(silo_lists)}")
+            print(f"diff: {last_diff}")
+            
+            # 前回のサイロの更新
+            if target_silo is None:
+                # 何も見つけられなかったら
+                # 5フレーム以上見つけられない場合
+                if self.__last_silo_detect_frame >= 3:
+                    print("reset target silo")
+                    self.__last_silo_camera_x = None
+                    self.__last_silo_camera_y = None
+                    self.silo_camera_out = None
+                    self.__last_silo_detect_frame = 0
+                
+                # 1, 2フレームなら見逃す
+                else:
+                    self.__last_silo_detect_frame += 1
+            else:
+                # なんかあったら 
+                self.__last_silo_camera_x = target_silo.pos[0]
+                self.__last_silo_camera_y = target_silo.pos[1]
+                print(target_silo.pos)
+                self.silo_camera_out = target_silo.pos
+                # フレームの初期化
+                self.__last_silo_detect_frame = 0
+        else:
+            # サイロをまだ決定していない場合
+            
+            # 認識しているサイロが二つ以下の場合はパスする
+            if len(silo_lists) < 3:
+                # TODO: 2個以下の場合は首振りしてね
+                self.__last_silo_camera_x = None
+                self.__last_silo_camera_y = None
+                self.silo_camera_out = None
+                print("サイロを３個以上見つけてねハート")
+            else:
+                print("ターゲットのサイロを決定するお")
+                # TODO: サイロを決定するよ
+                t_silo = decide_silo(silo_lists=silo_lists)
+                
+                # 全部いっぱいならNone
+                if t_silo is None:
+                    self.__last_silo_camera_x = None
+                    self.__last_silo_camera_y = None
+                    self.silo_camera_out = None
+                    print("全部いっぱい")
+                # なんか入れれるサイロがあったらそれにGo
+                else:
+                    self.__last_silo_camera_x = t_silo.pos[0]
+                    self.__last_silo_camera_y = t_silo.pos[1]
+                    self.silo_camera_out = t_silo.pos
+                    self.__last_silo_detect_frame = 0
+                    print("君に決めた！")
+            
         q_out.put((frame, OUTPUT_ID.SILO))
-        self.silo_camera_out = silo_lists
+        # self.silo_camera_out = silo_lists
 
         # TODO: 消す
         # time.sleep(1)
