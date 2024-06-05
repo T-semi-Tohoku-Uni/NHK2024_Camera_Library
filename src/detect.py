@@ -488,7 +488,7 @@ def lcam_ball_detect_algorithm(x1, y1, x2, y2, last_x=None, last_y=None):
     pass
 
 class Silo:
-    def __init__(self, x1, y1, x2, y2):
+    def __init__(self, x1, y1, x2, y2, params):
         # 自分のサイロの座標
         self.x1 = x1
         self.y1 = y1
@@ -498,13 +498,31 @@ class Silo:
         self.__my_team_ball_cnt = 0
         self.__opponent_team_cnt = 0
         
-        self.pos = (0, 400, 0)
+        self.camera_param = params
+        
+        # 絶対座標の計算
+        self.pos = self.cac_absolute_coordinates()
+        # self.pos = self.cac_absolute_coordinates(params=params)
         # TODO: 下から順にボールが入っているリスト
     
-    def is_ball_in(self, ball_x, ball_y, is_my_team_ball):
+    def is_ball_in(self, ball_x1, ball_x2, ball_y1, ball_y2, is_my_team_ball):
         min_x, max_x = min(self.x1, self.x2), max(self.x1, self.x2)
         min_y, max_y = min(self.y1, self.y2), max(self.y1, self.y2)
+        
+        ball_x = (ball_x1 + ball_x2) / 2
+        ball_y = (ball_y1 + ball_y2) / 2
 
+        # ボールの絶対座標の計算
+        r = max(abs(ball_x1-ball_x2)/2, abs(ball_y1-ball_y2)/2)
+        z = calc_distance(r, PADDY_RICE_RADIUS)
+        
+        (ball_abs_x, ball_abs_y, ball_abs_z) = image_to_robot_coordinate_transformation(self.camera_param,int((ball_x1+ball_x2)/2),int((ball_y1+ball_y2)/2),z)
+        
+        # if ball_abs_z > 1500:
+        #     return
+        # if abs(self.pos[1] - ball_abs_z) > 3000:
+        #     return
+        
         inside_points = []
         if min_x < ball_x and ball_x < max_x:
             inside_points.append((ball_x, ball_y))
@@ -520,11 +538,11 @@ class Silo:
     def get_opponent_team_cnt(self):
         return self.__opponent_team_cnt
     
-    def cac_absolute_coordinates(self, param):
+    def cac_absolute_coordinates(self):
         w = (self.x1+self.x2)/2
         h = (self.y1+self.y2)/2
         dis = calc_distance(abs(self.y1-self.y2),SILO_HEIGHT)
-        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(params,w,h,dis)
+        (target_silo_x,target_silo_y,target_silo_z) = image_to_robot_coordinate_transformation(self.camera_param,w,h,dis)
         return (target_silo_x,target_silo_y,target_silo_z)
     
     def update_position(self, params):
@@ -740,7 +758,7 @@ class DetectObj:
             #     continue
             
             silo_lists.append(
-                Silo(x1=x1, y1=y1, x2=x2, y2=y2)
+                Silo(x1=x1, y1=y1, x2=x2, y2=y2, params=ucam.params)
             )
         
         # 自分のチームのボールの座標 ((x1, y1), (x2, y2))を取得する
@@ -751,7 +769,7 @@ class DetectObj:
         for my_ball_box in my_team_ball_box_in_silo:
             for silo in silo_lists:
                 x1, y1, x2, y2 = my_ball_box.xyxy[0]
-                silo.is_ball_in(ball_x = (x1 + x2)/2, ball_y = (y1 + y2)/2, is_my_team_ball = True)
+                silo.is_ball_in(ball_x1=x1, ball_x2=x2, ball_y1=y1, ball_y2=y2, is_my_team_ball = True)
         
         # 相手チームのボールの座標 ((x1, y1), (x2, y2))を取得する
         opponent_team_in_silo = [
@@ -761,7 +779,7 @@ class DetectObj:
         for opponent_ball_box in opponent_team_in_silo:
             for silo in silo_lists:
                 x1, y1, x2, y2 = opponent_ball_box.xyxy[0]
-                silo.is_ball_in(ball_x = (x1 + x2)/2, ball_y = (y1 + y2)/2, is_my_team_ball = False)
+                silo.is_ball_in(ball_x1=x1, ball_x2=x2, ball_y1=y1, ball_y2=y2, is_my_team_ball = False)
         
         # print("#"*100)
         # for silo in silo_lists:
@@ -771,8 +789,8 @@ class DetectObj:
         # TODO: 出力をいい感じにする
 
         #サイロの座標を更新 (ロボット座標へ)
-        for silo in silo_lists:
-            silo.update_position(ucam.params)
+        # for silo in silo_lists:
+        #     silo.update_position(ucam.params)
         
         # サイロを決定している場合
         if (self.__last_silo_camera_x is not None) and (self.__last_silo_camera_y is not None):
@@ -797,8 +815,8 @@ class DetectObj:
             # 前回のサイロの更新
             if target_silo is None:
                 # 何も見つけられなかったら
-                # 5フレーム以上見つけられない場合
-                if self.__last_silo_detect_frame >= 3:
+                # 2フレーム以上見つけられない場合
+                if self.__last_silo_detect_frame >= 2:
                     print("reset target silo")
                     self.__last_silo_camera_x = None
                     self.__last_silo_camera_y = None
@@ -819,8 +837,11 @@ class DetectObj:
         else:
             # サイロをまだ決定していない場合
             
+            # 見えているサイロの中で一番近いサイロの距離を見つける
+            min_distance_silo = max(silo_lists, key=lambda silo: silo.pos[1])
+            
             # 認識しているサイロが二つ以下の場合はパスする
-            if len(silo_lists) < 3:
+            if (len(silo_lists) < 3 and min_distance_silo.pos[1] > 2000):
                 # TODO: 2個以下の場合は首振りしてね
                 self.__last_silo_camera_x = None
                 self.__last_silo_camera_y = None
